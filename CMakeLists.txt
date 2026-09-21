@@ -29,12 +29,18 @@ add_library(miniaudio STATIC third_party/miniaudio/implementation.cpp)
 target_include_directories(miniaudio PUBLIC third_party/miniaudio)
 target_compile_definitions(miniaudio PUBLIC MA_NO_ENGINE MA_NO_RESOURCE_MANAGER MA_NO_NODE_GRAPH MA_NO_GENERATION MA_NO_ENCODING MA_NO_FLAC MA_NO_MP3)
 set_target_properties(miniaudio PROPERTIES AUTOMOC OFF)
-add_library(rock_audio src/audio/handpan_mixer.cpp src/audio/audio_player.cpp assets/soundbank.qrc)
+add_library(rock_audio src/audio/handpan_mixer.cpp src/audio/audio_player.cpp src/audio/live_handpan.cpp assets/soundbank.qrc)
 set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
+    src/ui/performance_page.cpp src/ui/performance_page.h
+    src/ui/handpan_test.cpp src/ui/handpan_test.h
+    src/platform/output_discovery.cpp src/platform/output_discovery.h
     src/ui/piano_roll.cpp src/ui/piano_roll.h)
 target_link_libraries(rock_ui PUBLIC rock_core rock_audio Qt6::Widgets Qt6::Concurrent)
+if(WIN32)
+    target_link_libraries(rock_ui PRIVATE setupapi cfgmgr32 user32 dwmapi)
+endif()
 add_executable(RockAutoMusicPlay WIN32 main.cpp)
 target_link_libraries(RockAutoMusicPlay PRIVATE rock_ui)
 target_compile_definitions(RockAutoMusicPlay PRIVATE ROCK_APP_VERSION="${PROJECT_VERSION}")

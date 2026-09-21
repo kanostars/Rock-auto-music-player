@@ -15,7 +15,7 @@ uint64_t frame(double seconds) {
 }
 HandpanMixer::HandpanMixer(SampleBank bank):bank_(std::move(bank)) {
     for(const auto& variants:bank_)for(const auto& sample:variants)
-        if(sample.empty()||sample.size()%2)throw std::invalid_argument("手盘立体声采样不完整。");
+        if(sample.empty()||sample.size()%2)throw std::invalid_argument("手碟立体声采样不完整。");
 }
 void HandpanMixer::prepare(const Song& song,const Conversion& result) {
     events_.clear();voices_.fill(nullptr);next_=0;cursor_=0;

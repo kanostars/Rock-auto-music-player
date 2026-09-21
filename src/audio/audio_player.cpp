@@ -11,12 +11,12 @@ SampleBank loadHandpanBank() {
     initSoundbank();SampleBank bank;
     for(size_t i=0;i<bank.size();++i)for(int variant=0;variant<sampleVariants;++variant) {
         QFile file(QString(":/handpan/%1_%2.wav").arg(QChar(keys[i])).arg(variant+1));
-        if(!file.open(QIODevice::ReadOnly))throw std::runtime_error("无法读取内置手盘采样。");
+        if(!file.open(QIODevice::ReadOnly))throw std::runtime_error("无法读取内置手碟采样。");
         auto bytes=file.readAll();auto config=ma_decoder_config_init(ma_format_f32,2,audioRate);
         ma_uint64 count=0;void* pcm=nullptr;
         auto result=ma_decode_memory(bytes.constData(),bytes.size(),&config,&count,&pcm);
         std::unique_ptr<void,void(*)(void*)> decoded(pcm,[](void* p){ma_free(p,nullptr);});
-        if(result!=MA_SUCCESS||count==0||count>audioRate*10)throw std::runtime_error("内置手盘采样解码失败。");
+        if(result!=MA_SUCCESS||count==0||count>audioRate*10)throw std::runtime_error("内置手碟采样解码失败。");
         auto* data=static_cast<float*>(pcm);bank[i][variant].assign(data,data+count*2);
     }
     return bank;

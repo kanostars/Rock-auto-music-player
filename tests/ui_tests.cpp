@@ -1,13 +1,9 @@
 #include "ui/main_window.h"
 #include "ui/piano_roll.h"
-#include <QApplication>
+#include "ui/performance_page.h"
+#include "ui/handpan_test.h"
 #include <QComboBox>
-#include <QDialog>
-#include <QDialogButtonBox>
-#include <QDir>
-#include <QDoubleSpinBox>
 #include <QFontDatabase>
-#include <QDropEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -17,13 +13,15 @@
 #include <QScrollBar>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QSignalSpy>
 #include <QMouseEvent>
 #include <QTemporaryDir>
-#include <QTabWidget>
 #include <QTableWidget>
 #include <QTest>
+#include <QThread>
 #include <QTreeWidget>
+#include <QtConcurrent/QtConcurrentRun>
 #include <MidiFile.h>
 #include <sstream>
 
@@ -39,6 +37,215 @@ class UiTests : public QObject {
 private slots:
     void initTestCase() {
         QVERIFY(QDir().mkpath(qEnvironmentVariable("ROCK_SCREENSHOTS")));
+    }
+    void goPerformInheritsPreviewPosition() {
+        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(30);
+        auto* go=w.findChild<QPushButton*>("goPerformanceButton");auto* pages=w.findChild<QStackedWidget*>("mainPages");
+        auto* page=static_cast<rock::PerformancePage*>(pages->widget(1));
+        auto* editorTab=w.findChild<QPushButton*>("editorPageButton");auto* outputTab=w.findChild<QPushButton*>("performancePageButton");
+        QVERIFY(go);QTest::mouseClick(go,Qt::LeftButton);QCOMPARE(pages->currentIndex(),1);QCOMPARE(page->previewPosition(),0.0);QVERIFY(outputTab->isChecked());
+        QTest::mouseClick(editorTab,Qt::LeftButton);
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/studio-demo.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");auto* preview=w.findChild<rock::PianoRoll*>("performanceRoll");
+        auto* editorClock=w.findChild<QLabel*>("previewClock");auto* outputClock=w.findChild<QLabel*>("performanceClock");
+        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,20.375)));
+        QTest::mouseClick(outputTab,Qt::LeftButton);preview->setZoom(200);QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(go,Qt::LeftButton);
+        QCOMPARE(page->previewPosition(),20.375);QCOMPARE(outputClock->text(),editorClock->text());QVERIFY(outputTab->isChecked());QVERIFY(!editorTab->isChecked());
+        QVERIFY(preview->horizontalScrollBar()->value()>0);QVERIFY(!preview->editingEnabled());
+        page->setPreviewPosition(7.25);QTest::mouseClick(outputTab,Qt::LeftButton);QCOMPARE(page->previewPosition(),7.25); // Current tab does not reset a local seek.
+        QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(outputTab,Qt::LeftButton);
+        QCOMPARE(page->previewPosition(),20.375);QCOMPARE(outputClock->text(),editorClock->text());
+        QTest::mouseClick(editorTab,Qt::LeftButton);auto* play=w.findChild<QPushButton*>("playButton");
+        QTest::mouseClick(play,Qt::LeftButton);QTest::qWait(80);QTest::mouseClick(go,Qt::LeftButton);
+        QVERIFY(page->previewPosition()>20.375);QCOMPARE(outputClock->text(),editorClock->text());QVERIFY(play->text().contains("手碟试听"));
+        auto stoppedAt=page->previewPosition();QTest::qWait(35);QCOMPARE(page->previewPosition(),stoppedAt);
+        QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(w.findChild<QPushButton*>("expandTrackButton"),Qt::LeftButton);
+        auto* detached=w.findChild<QWidget*>("trackWindow");QVERIFY(detached->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,5.125)));
+        QTest::mouseClick(go,Qt::LeftButton);QVERIFY(!detached->isVisible());QCOMPARE(pages->currentIndex(),1);QCOMPARE(page->previewPosition(),5.125);
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/empty.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);QCOMPARE(page->previewPosition(),0.0);
+    }
+    void handpanTestKeysMouseAndFocus() {
+        rock::HandpanTestDialog dialog(nullptr,rock::AudioBackend::NullTest);dialog.show();dialog.activateWindow();
+        auto* board=dialog.findChild<rock::HandpanBoard*>("handpanBoard");QVERIFY(board);board->setFocus();
+        QTRY_VERIFY(dialog.isActiveWindow());QTRY_VERIFY(dialog.audioRunning());QSignalSpy played(&dialog,&rock::HandpanTestDialog::noteTriggered);
+        for(int i=0;i<9;++i){
+            QTest::keyPress(board,static_cast<Qt::Key>(rock::keys[i]));QVERIFY(board->highlighted(i));QCOMPARE(played.last().at(0).toInt(),i);
+            QTest::keyRelease(board,static_cast<Qt::Key>(rock::keys[i]));QVERIFY(!board->highlighted(i));
+        }
+        QCOMPARE(played.count(),9);
+        QTest::keyPress(board,Qt::Key_T);QTest::keyPress(board,Qt::Key_F);QVERIFY(board->highlighted(6)&&board->highlighted(1));
+        QKeyEvent repeat(QEvent::KeyPress,Qt::Key_T,Qt::NoModifier,"t",true);QApplication::sendEvent(board,&repeat);QCOMPARE(played.count(),11);
+        QTest::mousePress(board,Qt::LeftButton,Qt::NoModifier,board->padCenter(6));QCOMPARE(played.count(),12);
+        QTest::keyRelease(board,Qt::Key_T);QVERIFY(board->highlighted(6)); // Mouse still holds T.
+        QTest::mouseRelease(board,Qt::LeftButton,Qt::NoModifier,board->padCenter(6));QVERIFY(!board->highlighted(6));
+        QTest::keyRelease(board,Qt::Key_F);
+        QTest::keyClick(board,Qt::Key_A);QTest::keyClick(board,Qt::Key_B,Qt::ControlModifier);QCOMPARE(played.count(),12);
+        QTest::mouseClick(board,Qt::LeftButton,Qt::NoModifier,QPoint(8,8));QCOMPARE(played.count(),12);
+        for(int i=0;i<9;++i){QTest::mousePress(board,Qt::LeftButton,Qt::NoModifier,board->padCenter(i));QVERIFY(board->highlighted(i));QCOMPARE(played.last().at(0).toInt(),i);QTest::mouseRelease(board,Qt::LeftButton,Qt::NoModifier,board->padCenter(i));QVERIFY(!board->highlighted(i));}
+        QTest::keyPress(board,Qt::Key_B);QTest::keyPress(board,Qt::Key_Y);
+        QVERIFY(dialog.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/18-handpan-test.png"));
+        QWidget other;other.show();other.activateWindow();QTRY_VERIFY(!dialog.isActiveWindow());QTRY_VERIFY(!dialog.audioRunning());
+        for(int i=0;i<9;++i)QVERIFY(!board->highlighted(i));int before=played.count();
+        QTest::keyClick(board,Qt::Key_U);QTest::mouseClick(board,Qt::LeftButton,Qt::NoModifier,board->padCenter(8));QCOMPARE(played.count(),before);
+        dialog.activateWindow();QTRY_VERIFY(dialog.audioRunning());QApplication::sendEvent(board,&repeat);QCOMPARE(played.count(),before);
+        QTest::keyClick(board,Qt::Key_U);QCOMPARE(played.count(),before+1);
+        dialog.showMinimized();QTRY_VERIFY(!dialog.audioRunning());QTest::keyClick(board,Qt::Key_B);QCOMPARE(played.count(),before+1);
+        dialog.showNormal();dialog.activateWindow();QTRY_VERIFY(dialog.audioRunning());
+        dialog.resize(730,540);QTest::qWait(20);QVERIFY(dialog.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/19-handpan-test-compact.png"));
+        dialog.close();QVERIFY(!dialog.audioRunning());
+    }
+    void outputDiscoveryRequiresManualRefreshAndSelection() {
+        auto keyboardCalls=std::make_shared<std::atomic<int>>(0),windowCalls=std::make_shared<std::atomic<int>>(0);
+        rock::OutputDiscovery discovery;
+        discovery.keyboards=[keyboardCalls]{
+            int call=++*keyboardCalls;QThread::msleep(30);
+            if(call==2)return rock::DiscoveryResult{};
+            if(call==3)throw std::runtime_error("test error");
+            return rock::DiscoveryResult{{{"同名键盘 · 1",QString("keyboard-a"),"device a"},{"同名键盘 · 2",QString("keyboard-b"),"device b"}}, {}};
+        };
+        discovery.windows=[windowCalls]{
+            int call=++*windowCalls;QThread::msleep(30);
+            if(call==2)return rock::DiscoveryResult{{},"查找窗口失败（系统错误 5），请重试。"};
+            if(call==3)return rock::DiscoveryResult{};
+            return rock::DiscoveryResult{{{"目标 · PID 10",QVariant::fromValue(quint64(0x123456789)),"window",10}}, {}};
+        };
+        rock::PerformancePage page(nullptr,discovery,rock::AudioBackend::NullTest);page.resize(1100,720);page.show();QTest::qWait(40);
+        auto* keyboards=page.findChild<QComboBox*>("performanceKeyboard");auto* windows=page.findChild<QComboBox*>("performanceWindow");
+        auto* refreshKeys=page.findChild<QPushButton*>("refreshKeyboardsButton");auto* refreshWindows=page.findChild<QPushButton*>("refreshWindowsButton");
+        auto* keyStatus=page.findChild<QLabel*>("keyboardDiscoveryStatus");auto* windowStatus=page.findChild<QLabel*>("windowDiscoveryStatus");
+        QVERIFY(keyboards&&windows&&refreshKeys&&refreshWindows&&keyStatus&&windowStatus);
+        QCOMPARE(keyboardCalls->load(),0);QCOMPARE(windowCalls->load(),0);
+        QVERIFY(keyboards->currentText().isEmpty());QVERIFY(windows->currentText().isEmpty());
+        page.hide();page.show();QTest::qWait(20);QCOMPARE(keyboardCalls->load(),0);QCOMPARE(windowCalls->load(),0);
+        QTest::mouseClick(refreshKeys,Qt::LeftButton);QVERIFY(!refreshKeys->isEnabled());QVERIFY(refreshWindows->isEnabled());
+        QCOMPARE(keyboards->currentIndex(),-1);QVERIFY(keyStatus->text().contains("正在"));
+        QTest::mouseClick(refreshWindows,Qt::LeftButton);QVERIFY(!refreshWindows->isEnabled());
+        QTRY_VERIFY(refreshKeys->isEnabled()&&refreshWindows->isEnabled());
+        QCOMPARE(keyboardCalls->load(),1);QCOMPARE(windowCalls->load(),1);QCOMPARE(keyboards->count(),2);QCOMPARE(windows->count(),1);
+        QCOMPARE(keyboards->currentIndex(),-1);QCOMPARE(windows->currentIndex(),-1);
+        QVERIFY(keyboards->currentText().isEmpty());QVERIFY(windows->currentText().isEmpty());
+        QVERIFY(keyStatus->text().contains("找到 2"));QVERIFY(windowStatus->text().contains("找到 1"));
+        keyboards->setCurrentIndex(1);windows->setCurrentIndex(0);
+        QCOMPARE(keyboards->currentData().toString(),QString("keyboard-b"));
+        QCOMPARE(windows->currentData().toULongLong(),quint64(0x123456789));QCOMPARE(windows->currentData(Qt::UserRole+1).toUInt(),10u);
+        QVERIFY(keyStatus->text().contains("已选择"));QVERIFY(windowStatus->text().contains("已选择"));
+        QVERIFY(!page.findChild<QPushButton*>("startPerformanceButton")->isEnabled());
+        QTest::mouseClick(refreshKeys,Qt::LeftButton);QVERIFY(keyboards->currentText().isEmpty());QCOMPARE(windows->currentIndex(),0);
+        QTRY_VERIFY(refreshKeys->isEnabled());QVERIFY(keyStatus->text().contains("未找到"));QVERIFY(!keyboards->isEnabled());
+        QTest::mouseClick(refreshWindows,Qt::LeftButton);QTRY_VERIFY(refreshWindows->isEnabled());
+        QVERIFY(windowStatus->text().contains("失败"));QCOMPARE(windows->count(),0);QVERIFY(windows->currentText().isEmpty());
+        QTest::mouseClick(refreshKeys,Qt::LeftButton);QTRY_VERIFY(refreshKeys->isEnabled());QVERIFY(keyStatus->text().contains("失败"));
+        QTest::mouseClick(refreshWindows,Qt::LeftButton);QTRY_VERIFY(refreshWindows->isEnabled());QVERIFY(windowStatus->text().contains("未找到"));
+        QTest::mouseClick(refreshKeys,Qt::LeftButton);QTRY_VERIFY(refreshKeys->isEnabled());QCOMPARE(keyboards->count(),2);QCOMPARE(keyboards->currentIndex(),-1);
+        auto* testKeys=page.findChild<QPushButton*>("testKeysButton");QTest::mouseClick(testKeys,Qt::LeftButton);
+        QPointer<QDialog> testWindow=page.findChild<QDialog*>("keyTestWindow");QVERIFY(testWindow);QVERIFY(testWindow->isVisible());
+        QTest::mouseClick(testKeys,Qt::LeftButton);QCOMPARE(page.findChildren<QDialog*>("keyTestWindow").size(),1);
+        testWindow->close();QTRY_VERIFY(testWindow.isNull());QTest::mouseClick(testKeys,Qt::LeftButton);
+        QVERIFY(page.findChild<QDialog*>("keyTestWindow")->isVisible());
+        // Destroying a page while scanning must not leave a worker accessing deleted widgets.
+        auto* transient=new rock::PerformancePage(nullptr,discovery);
+        transient->findChild<QPushButton*>("refreshKeyboardsButton")->click();delete transient;QTest::qWait(60);
+    }
+    void nativeOutputDiscoverySmoke() {
+#ifdef Q_OS_WIN
+        auto keyboardScan=QtConcurrent::run(rock::discoverKeyboards);auto windowScan=QtConcurrent::run(rock::discoverWindows);
+        const auto keyboards=keyboardScan.result();QVERIFY2(keyboards.error.isEmpty(),qPrintable(keyboards.error));
+        std::set<QString> ids;for(const auto& entry:keyboards.choices){QVERIFY(!entry.id.toString().isEmpty());QVERIFY(!entry.label.isEmpty());QVERIFY(ids.insert(entry.id.toString()).second);}
+        const auto windows=windowScan.result();QVERIFY2(windows.error.isEmpty(),qPrintable(windows.error));
+        std::set<quint64> handles;for(const auto& entry:windows.choices){QVERIFY(entry.id.toULongLong()!=0);QVERIFY(!entry.label.isEmpty());QVERIFY(handles.insert(entry.id.toULongLong()).second);QVERIFY(entry.processId!=QCoreApplication::applicationPid());}
+        qInfo("Native discovery: %zu keyboards, %zu windows",keyboards.choices.size(),windows.choices.size());
+#endif
+    }
+    void performancePageNavigationAndReadonlyPreview() {
+        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(30);
+        auto* pages=w.findChild<QStackedWidget*>("mainPages");
+        auto* editorTab=w.findChild<QPushButton*>("editorPageButton");auto* outputTab=w.findChild<QPushButton*>("performancePageButton");
+        auto* preview=w.findChild<rock::PianoRoll*>("performanceRoll");auto* editor=w.findChild<rock::PianoRoll*>("pianoRoll");
+        QVERIFY(pages&&editorTab&&outputTab&&preview&&editor);QCOMPARE(pages->currentIndex(),0);
+        QTest::mouseClick(outputTab,Qt::LeftButton);QCOMPARE(pages->currentIndex(),1);QVERIFY(outputTab->isChecked());QVERIFY(!editorTab->isChecked());
+        QVERIFY(!preview->editingEnabled());QVERIFY(!w.findChild<QPushButton*>("startPerformanceButton")->isEnabled());
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/nine-keys.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        QCOMPARE(pages->currentIndex(),1);QCOMPARE(w.findChild<QLabel*>("performanceSongTitle")->text(),QString("nine-keys"));
+        QVERIFY(w.findChild<QLabel*>("performanceSongInfo")->text().contains("9 个可演奏音符"));
+        QSignalSpy edits(preview,&rock::PianoRoll::notesEdited),deletes(preview,&rock::PianoRoll::deleteRequested),adds(preview,&rock::PianoRoll::addRequested);
+        preview->selectSource(0,false);QTest::keyClick(preview->viewport(),Qt::Key_Delete);QTest::keyClick(preview->viewport(),Qt::Key_Up);
+        preview->setAddMode(true);QVERIFY(!preview->addMode());
+        preview->setZoom(120);const int rh=std::max(14,(preview->viewport()->height()-44)/10);
+        drag(preview->viewport(),QPoint(105,44+8*rh+rh/2),QPoint(165,44+7*rh+rh/2));
+        QCOMPARE(edits.count(),0);QCOMPARE(deletes.count(),0);QCOMPARE(adds.count(),0);QCOMPARE(w.currentResult()->edited,0);
+        auto* mode=w.findChild<QComboBox*>("performanceTempoMode");auto* bpm=w.findChild<QDoubleSpinBox*>("performanceBpm");
+        QVERIFY(!bpm->isEnabled());mode->setCurrentIndex(1);QVERIFY(bpm->isEnabled());bpm->setValue(156);
+        w.findChild<QSpinBox*>("performanceHold")->setValue(45);
+        QTest::mouseClick(editorTab,Qt::LeftButton);QCOMPARE(pages->currentIndex(),0);QVERIFY(editor->isVisible());
+        QCOMPARE(w.findChild<QDoubleSpinBox*>("bpmSpin")->value(),120.0);
+        QCOMPARE(w.findChild<QSpinBox*>("holdSpin")->value(),30);
+        editor->selectSource(0,false);QTest::keyClick(editor->viewport(),Qt::Key_Delete);QCOMPARE(w.currentResult()->deleted,1);
+        QTest::mouseClick(outputTab,Qt::LeftButton);QVERIFY(w.findChild<QLabel*>("performanceSongInfo")->text().contains("8 个可演奏音符"));
+        QCOMPARE(bpm->value(),156.0);QVERIFY(!preview->editingEnabled());
+        QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(w.findChild<QPushButton*>("undoButton"),Qt::LeftButton);
+        QTest::mouseClick(w.findChild<QPushButton*>("expandTrackButton"),Qt::LeftButton);
+        auto* detached=w.findChild<QWidget*>("trackWindow");QVERIFY(detached->isVisible());
+        QTest::mouseClick(outputTab,Qt::LeftButton);QVERIFY(!detached->isVisible());QCOMPARE(pages->currentIndex(),1);
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/studio-demo.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        QTest::qWait(30);QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/16-performance-page.png"));
+        w.resize(1120,740);QTest::qWait(30);QCOMPARE(w.size(),QSize(1120,740));
+        QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/17-performance-compact.png"));
+        QTest::mouseClick(editorTab,Qt::LeftButton);QVERIFY(w.findChild<QPushButton*>("playButton")->isVisible());
+    }
+    void detachedTrackPlaybackAndEditing() {
+        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(40);
+        auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");
+        auto* expand=w.findChild<QPushButton*>("expandTrackButton");QVERIFY(expand);
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/nine-keys.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        roll->setZoom(100);roll->selectSources({0,1,2});const int originalWidth=roll->width();
+        QTest::mouseClick(expand,Qt::LeftButton);auto* detached=w.findChild<QWidget*>("trackWindow");QVERIFY(detached);
+        QTRY_VERIFY(detached->isVisible());QVERIFY(detached->isFullScreen());QCOMPARE(roll->window(),detached);
+        detached->showNormal();detached->resize(1500,900);detached->activateWindow();QTest::qWait(40);
+        QVERIFY(roll->width()>originalWidth);QCOMPARE(roll->zoom(),100.0);QCOMPARE(roll->selectedSources().size(),size_t(3));
+        QCOMPARE(w.findChildren<rock::PianoRoll*>("pianoRoll").size(),1);
+        auto* play=detached->findChild<QPushButton*>("playButton");auto* undo=detached->findChild<QPushButton*>("undoButton");
+        auto* add=detached->findChild<QPushButton*>("addNoteButton");QVERIFY(play&&undo&&add);
+        auto point=[&](double seconds,int target){
+            int rh=std::max(14,(roll->viewport()->height()-44)/10);
+            return QPoint(qRound(92+seconds*roll->zoom()-roll->horizontalScrollBar()->value()),44+(8-target)*rh+rh/2);
+        };
+        // Box-select and resize a group in the detached viewport; pitch bounds still apply.
+        drag(roll->viewport(),point(.01,-1),point(1.3,2));QCOMPARE(roll->selectedSources().size(),size_t(3));
+        QTest::keyClick(roll->viewport(),Qt::Key_Down);QCOMPARE(w.currentResult()->edited,0);
+        QTest::keyClick(roll->viewport(),Qt::Key_Up);for(int i=0;i<3;++i)QCOMPARE(w.currentResult()->notes[i].target,i+1);
+        auto edge=point(.73,2);drag(roll->viewport(),edge,edge+QPoint(10,0));
+        for(int i=0;i<3;++i)QVERIFY(std::abs(w.currentResult()->notes[i].duration-.35)<.002);
+        QTest::keyClick(roll->viewport(),Qt::Key_Delete);QCOMPARE(w.currentResult()->deleted,3);
+        roll->setFocus();QTest::keyClick(roll,Qt::Key_Z,Qt::ControlModifier);QCOMPARE(w.currentResult()->deleted,0);
+        QTest::mouseClick(undo,Qt::LeftButton);QTest::mouseClick(undo,Qt::LeftButton);QCOMPARE(w.currentResult()->edited,0);
+        roll->selectSource(8,false);QTest::keyClick(roll->viewport(),Qt::Key_Up);QCOMPARE(w.currentResult()->notes[8].target,8);
+        QTest::mouseClick(add,Qt::LeftButton);QTest::mouseClick(roll->viewport(),Qt::LeftButton,Qt::NoModifier,point(4.5,8));
+        QCOMPARE(w.currentResult()->notes.size(),size_t(10));QCOMPARE(w.currentResult()->notes[9].target,8);
+        QTest::keyClick(roll->viewport(),Qt::Key_Escape);QVERIFY(!roll->addMode());QVERIFY(detached->isVisible());
+        auto* volume=detached->findChild<QSlider*>("volumeSlider");QVERIFY(volume);volume->setValue(35);
+        QTest::mouseClick(detached->findChild<QPushButton*>("reportButton"),Qt::LeftButton);
+        auto* report=detached->findChild<QDialog*>("conversionReport");QVERIFY(report);QVERIFY(report->isVisible());report->close();
+        QTest::qWait(25);QVERIFY(detached->grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/15-detached-track.png"));
+        detached->activateWindow();roll->setFocus();QTest::qWait(25);
+        QTest::keyClick(roll,Qt::Key_F11);QTRY_VERIFY(detached->isFullScreen());
+        QTest::keyClick(roll,Qt::Key_F11);QTRY_VERIFY(!detached->isFullScreen());
+        QTest::mouseClick(play,Qt::LeftButton);QVERIFY(!roll->editingEnabled());QVERIFY(!add->isEnabled());
+        QTest::keyClick(roll->viewport(),Qt::Key_Delete);QCOMPARE(w.currentResult()->deleted,0);
+        // Returning during playback retains the live transport, rather than starting another player.
+        detached->close();QVERIFY(!detached->isVisible());QCOMPARE(roll->window(),static_cast<QWidget*>(&w));
+        QVERIFY(play->text().contains("暂停"));QCOMPARE(volume->value(),35);QCOMPARE(w.currentResult()->notes[9].target,8);
+        QTest::mouseClick(play,Qt::LeftButton);QVERIFY(roll->editingEnabled());
+        QTest::mouseClick(undo,Qt::LeftButton);QCOMPARE(w.currentResult()->notes[9].target,-1);
+        QTest::mouseClick(expand,Qt::LeftButton);QCOMPARE(roll->window(),detached);
+        QTest::mouseClick(detached->findChild<QPushButton*>("redoButton"),Qt::LeftButton);QCOMPARE(w.currentResult()->notes[9].target,8);
+        // Import and song changes from the main window update this same editor safely.
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/empty.mid"});QVERIFY(!roll->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);QVERIFY(roll->isEnabled());QCOMPARE(w.currentResult()->notes.size(),size_t(0));
+        w.findChild<QListWidget*>("songList")->setCurrentRow(0);QCOMPARE(w.currentResult()->notes[9].target,8);
+        QTest::mouseClick(expand,Qt::LeftButton);QCOMPARE(roll->window(),static_cast<QWidget*>(&w));
+        QTest::mouseClick(expand,Qt::LeftButton);QCOMPARE(w.findChildren<rock::PianoRoll*>("pianoRoll").size(),1);
+        w.close();QVERIFY(!detached->isVisible());
     }
     void reportPagination() {
         QTemporaryDir fixtures;QVERIFY(fixtures.isValid());
@@ -295,13 +502,13 @@ private slots:
         int rh=std::max(14,(roll->viewport()->height()-44)/10);
         QPoint empty(qRound(92+.35*roll->zoom()),44+rh/2);
         QTest::mouseClick(roll->viewport(),Qt::LeftButton,Qt::NoModifier,empty);
-        QVERIFY(play->text().contains("手盘试听"));QVERIFY(roll->editingEnabled());
+        QVERIFY(play->text().contains("手碟试听"));QVERIFY(roll->editingEnabled());
         QVERIFY(roll->hasFocus()||roll->viewport()->hasFocus());
         QString sought=w.findChild<QLabel*>("previewClock")->text();QVERIFY(!sought.startsWith("00:00.00"));
         QTest::keyClick(roll->viewport(),Qt::Key_Space);QTest::qWait(70);
         QVERIFY(play->text().contains("暂停试听"));QVERIFY(!roll->editingEnabled());
         QVERIFY(w.findChild<QLabel*>("previewClock")->text()!=sought);
-        QTest::keyClick(roll->viewport(),Qt::Key_Space);QVERIFY(play->text().contains("手盘试听"));QVERIFY(roll->editingEnabled());
+        QTest::keyClick(roll->viewport(),Qt::Key_Space);QVERIFY(play->text().contains("手碟试听"));QVERIFY(roll->editingEnabled());
     }
     void parameterValidationAndConflictGate() {
         rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();
@@ -341,7 +548,7 @@ private slots:
         QTest::mouseClick(apply,Qt::LeftButton);QVERIFY(w.currentResult()->conflicts>0);
         QString before=clock->text();QTest::mouseClick(play,Qt::LeftButton);
         warning=w.findChild<QMessageBox*>("validationWarning");QVERIFY(warning);QVERIFY(warning->text().contains("同键过密冲突"));
-        QTest::qWait(100);QCOMPARE(clock->text(),before);QVERIFY(play->text().contains("手盘试听"));
+        QTest::qWait(100);QCOMPARE(clock->text(),before);QVERIFY(play->text().contains("手碟试听"));
         QVERIFY(warning->grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/10-conflict-warning.png"));
         warning->accept();QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
         hold->setValue(30);QTest::mouseClick(apply,Qt::LeftButton);QCOMPARE(w.currentResult()->conflicts,0);
@@ -435,11 +642,11 @@ private slots:
         QVERIFY(w.findChild<QLabel*>("noteDetails")->text().contains("MIDI 60"));filter->setCurrentIndex(0);
         QTest::mouseClick(play,Qt::LeftButton);QTest::qWait(120);QVERIFY(play->text().contains("暂停"));
         auto* volume=w.findChild<QSlider*>("volumeSlider");QVERIFY(volume);volume->setValue(0);QCOMPARE(volume->value(),0);volume->setValue(60);
-        QTest::mouseClick(play,Qt::LeftButton);QVERIFY(play->text().contains("手盘试听"));
+        QTest::mouseClick(play,Qt::LeftButton);QVERIFY(play->text().contains("手碟试听"));
         QString pausedClock=w.findChild<QLabel*>("previewClock")->text();QTest::qWait(50);
         QCOMPARE(w.findChild<QLabel*>("previewClock")->text(),pausedClock);
         QTest::mouseClick(play,Qt::LeftButton);QTest::qWait(50);QVERIFY(play->text().contains("暂停试听"));
-        QTest::mouseClick(w.findChild<QPushButton*>("stopButton"),Qt::LeftButton);QVERIFY(play->text().contains("手盘试听"));
+        QTest::mouseClick(w.findChild<QPushButton*>("stopButton"),Qt::LeftButton);QVERIFY(play->text().contains("手碟试听"));
         QVERIFY(w.findChild<QLabel*>("previewClock")->text().startsWith("00:00.00"));
 
         auto* library=w.findChild<QListWidget*>("songList");QCOMPARE(library->count(),1);
@@ -478,7 +685,7 @@ private slots:
         QCOMPARE(w.currentResult()->edited,1);QCOMPARE(w.currentResult()->notes[0].target,2);
         QVERIFY(std::abs(w.currentResult()->notes[0].start-.4)<.002);
         QVERIFY(std::abs(w.currentResult()->notes[0].duration-.25)<.002);
-        QVERIFY(play->text().contains("手盘试听"));QVERIFY(undo->isEnabled());
+        QVERIFY(play->text().contains("手碟试听"));QVERIFY(undo->isEnabled());
         auto end=w.currentResult()->notes[0].start+w.currentResult()->notes[0].duration;
         from=point(0,1);drag(roll->viewport(),from,from+QPoint(40,0));
         QVERIFY(std::abs(w.currentResult()->notes[0].duration-.5)<.002);

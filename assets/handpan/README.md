@@ -1,4 +1,4 @@
-# 手盘采样
+# 手碟采样
 
 当前音色来自用户提供的 SiftHandpanWorkbench v0.1.4，其 `Workbench.Core.dll` 内嵌的 `HandpanSamples.{按键}_{1～4}.wav`。已替换旧视频录音切片，36 个 WAV 均保留原始字节，未经调音、重采样、归一化或裁切。
 

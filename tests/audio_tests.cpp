@@ -1,4 +1,5 @@
 #include "audio/audio_player.h"
+#include "audio/live_handpan.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -41,6 +42,28 @@ int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
     try {
         auto bank=loadHandpanBank();
+        {
+            SampleBank fixture;for(size_t key=0;key<9;++key)for(int variant=0;variant<sampleVariants;++variant){
+                auto& sample=fixture[key][variant];sample.resize(2000);
+                for(size_t i=0;i<sample.size();i+=2){sample[i]=.1f*(variant+1);sample[i+1]=-.05f*(variant+1);}
+            }
+            LiveHandpanMixer live(std::move(fixture));std::vector<float> block(128*2);live.render(block.data(),128);
+            check(energy(block)==0,"live mixer starts silent");check(!live.strike(-1)&&!live.strike(9),"live keys enforce nine-key range");
+            for(int i=0;i<5;++i){live.clear();check(live.strike(0),"live key queued");live.render(block.data(),128);
+                check(std::abs(block[0]-std::tanh(.1f*(i%4+1)*.6f*100/127))<1e-6,"live strikes rotate all four samples");
+                check(block[0]>0&&block[1]<0,"live audio retains stereo channels");}
+            live.clear();live.strike(1);live.strike(2);live.render(block.data(),128);
+            check(std::abs(block[0]-std::tanh(.2f*.6f*100/127))<1e-6,"simultaneous keys mix without interrupting one another");
+            live.strike(3);live.clear();live.render(block.data(),128);check(energy(block)==0,"focus loss clears tails and pending strikes");
+            live.strike(4);std::vector<float> tail(3000);live.render(tail.data(),1500);
+            check(tail[1998]!=0&&tail[2000]==0&&tail.back()==0,"sample plays naturally to end without looping");
+            for(int i=0;i<255;++i)check(live.strike(i%9),"live queue accepts bounded burst");
+            check(!live.strike(0),"queue overflow safely rejected");live.render(block.data(),128);
+            for(float sample:block)check(std::isfinite(sample)&&std::abs(sample)<=1,"dense chord mix remains bounded");
+            LiveHandpanPlayer device(AudioBackend::NullTest);QString error;
+            check(!device.strike(0),"inactive live device refuses keys");check(device.start(error),"live device starts");check(device.strike(8),"active live device accepts keys");
+            device.stop();check(!device.running()&&!device.strike(0),"live device stops on focus loss");check(device.start(error),"live device resumes");device.stop();
+        }
         QFile manifest(":/handpan/manifest.json");check(manifest.open(QIODevice::ReadOnly),"embedded sample provenance exists");
         auto records=QJsonDocument::fromJson(manifest.readAll()).object()["notes"].toArray();
         check(records.size()==9*sampleVariants,"all 36 source records embedded");
@@ -63,6 +86,8 @@ int main(int argc,char** argv) {
         if(app.arguments().contains("--device-smoke")) {
             AudioPlayer real;QString error;check(real.play(song,result,0,error),qPrintable(error));
             awaitFrames(real,0);std::this_thread::sleep_for(std::chrono::milliseconds(850));real.pause();
+            LiveHandpanPlayer live;check(live.start(error),qPrintable(error));check(live.strike(0)&&live.strike(6),"live system device accepts a chord");
+            std::this_thread::sleep_for(std::chrono::milliseconds(450));live.stop();check(!live.running(),"live system device stops immediately");
             std::cout<<"System playback device opened and rendered handpan audio successfully.\n";return 0;
         }
         HandpanMixer mixer(bank);mixer.prepare(song,result);

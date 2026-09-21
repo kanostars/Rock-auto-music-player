@@ -9,9 +9,10 @@
 
 class QLabel; class QPushButton; class QComboBox; class QDoubleSpinBox;
 class QSpinBox; class QListWidget; class QTreeWidget; class QTabWidget;
-class QProgressBar;
+class QProgressBar; class QSplitter; class QVBoxLayout; class QStackedWidget;
 namespace rock {
 class PianoRoll;
+class PerformancePage;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -21,6 +22,8 @@ public:
     bool isImporting() const {return busy_;}
     const Conversion* currentResult() const;
 protected:
+    bool eventFilter(QObject*,QEvent*) override;
+    void closeEvent(QCloseEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
@@ -42,6 +45,12 @@ private:
     bool settingsPending_{};
     QListWidget* library_{}; QTreeWidget* tracks_{};
     PianoRoll* roll_{}; QWidget* workspace_{};
+    QWidget *editorPanel_{},*transportPanel_{},*statusPanel_{},*trackWindow_{},*editorPlaceholder_{};
+    QSplitter* workspaceSplit_{}; QVBoxLayout* outerLayout_{};
+    QList<int> workspaceSizes_;
+    QPushButton* expandTrack_{};
+    QStackedWidget* pages_{};
+    PerformancePage* performancePage_{};
     QTabWidget* tabs_{};
     QLabel *songTitle_{},*subtitle_{},*status_{},*details_{},*clock_{},*dirty_{},*summary_{},*zoomText_{};
     QComboBox *strategy_{},*tempoMode_{},*filter_{},*octaveMode_{};
@@ -53,7 +62,9 @@ private:
     QProgressBar* progress_{};
     AudioPlayer audio_;
     QTimer timer_; double position_{};
-    void buildUi();
+    void buildUi(AudioBackend backend);
+    void openTrackWindow();
+    void restoreTrackPanel();
     void selectSong(int index);
     void applySettings();
     void recalculate(bool fit=false);
