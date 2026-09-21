@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(RockAutoMusicPlay VERSION 1.0.0 LANGUAGES CXX)
+project(RockAutoMusicPlay VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -33,12 +33,18 @@ add_library(rock_audio src/audio/handpan_mixer.cpp src/audio/audio_player.cpp sr
 set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
+    src/playback/performance_engine.cpp src/playback/performance_controller.cpp src/platform/key_output.cpp
     src/ui/performance_page.cpp src/ui/performance_page.h
     src/ui/handpan_test.cpp src/ui/handpan_test.h
     src/platform/output_discovery.cpp src/platform/output_discovery.h
     src/ui/piano_roll.cpp src/ui/piano_roll.h)
 target_link_libraries(rock_ui PUBLIC rock_core rock_audio Qt6::Widgets Qt6::Concurrent)
 if(WIN32)
+    add_library(interception SHARED third_party/interception/interception.c)
+    target_compile_definitions(interception PRIVATE INTERCEPTION_EXPORT)
+    set_target_properties(interception PROPERTIES AUTOMOC OFF PREFIX "")
+    target_include_directories(rock_ui PRIVATE third_party/interception)
+    add_dependencies(rock_ui interception)
     target_link_libraries(rock_ui PRIVATE setupapi cfgmgr32 user32 dwmapi)
 endif()
 add_executable(RockAutoMusicPlay WIN32 main.cpp)
@@ -49,6 +55,11 @@ rock_deploy_runtime(RockAutoMusicPlay TRUE)
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+    add_executable(performance_tests tests/performance_tests.cpp)
+    target_link_libraries(performance_tests PRIVATE rock_ui Qt6::Test)
+    rock_deploy_runtime(performance_tests TRUE)
+    add_dependencies(performance_tests audio_tests)
+    add_test(NAME performance_tests COMMAND performance_tests -platform offscreen -o performance-tests.txt,txt)
     add_executable(core_tests tests/core_tests.cpp)
     target_link_libraries(core_tests PRIVATE rock_core)
     target_compile_definitions(core_tests PRIVATE ROCK_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")

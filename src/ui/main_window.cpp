@@ -274,7 +274,7 @@ void MainWindow::buildUi(AudioBackend backend) {
         if(pages_->currentIndex()==page)return;
         if(page==1){pausePreview();if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();}
         pages_->setCurrentIndex(page);
-        if(page==1)performancePage_->setPreviewPosition(position_);
+        if(page==1)performancePage_->inheritPreviewPosition(position_);
     });
 }
 
@@ -324,6 +324,7 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
     return QMainWindow::eventFilter(watched,event);
 }
 void MainWindow::closeEvent(QCloseEvent* event) {
+    performancePage_->stopPerformance();
     if(trackWindow_)trackWindow_->close();
     QMainWindow::closeEvent(event);
 }

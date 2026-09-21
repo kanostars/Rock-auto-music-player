@@ -3,6 +3,7 @@
 #include "ui/performance_page.h"
 #include "ui/handpan_test.h"
 #include <QComboBox>
+#include <QCheckBox>
 #include <QFontDatabase>
 #include <QLabel>
 #include <QLineEdit>
@@ -156,6 +157,27 @@ private slots:
         std::set<quint64> handles;for(const auto& entry:windows.choices){QVERIFY(entry.id.toULongLong()!=0);QVERIFY(!entry.label.isEmpty());QVERIFY(handles.insert(entry.id.toULongLong()).second);QVERIFY(entry.processId!=QCoreApplication::applicationPid());}
         qInfo("Native discovery: %zu keyboards, %zu windows",keyboards.choices.size(),windows.choices.size());
 #endif
+    }
+    void performanceTimingAndStartRequirements() {
+        rock::OutputDiscovery discovery;
+        discovery.keyboards=[]{return rock::DiscoveryResult{{{"测试键盘",QString("test"),""}}, {}};};
+        discovery.windows=[]{return rock::DiscoveryResult{{{"测试窗口",quint64(1),"",1}}, {}};};
+        rock::PerformancePage page(nullptr,discovery,rock::AudioBackend::NullTest);
+        auto song=std::make_shared<rock::Song>();song->ppq=100;song->endTick=200;song->tempos={{0,500000,0}};
+        auto result=std::make_shared<rock::Conversion>();result->duration=1;result->exact=1;result->notes={{0,0,rock::Mapping::Exact,0,.1,false,0,20}};
+        page.setSong(song,result,"test.mid",{});page.setPreviewPosition(.375);
+        auto* mode=page.findChild<QComboBox*>("performanceTempoMode");auto* bpm=page.findChild<QDoubleSpinBox*>("performanceBpm");
+        mode->setCurrentIndex(1);bpm->setValue(60);QCOMPARE(page.previewPosition(),.75);
+        page.inheritPreviewPosition(.125);QCOMPARE(page.previewPosition(),.25);
+        page.setSong(song,result,"test.mid",{});QCOMPARE(page.previewPosition(),.25);
+        QVERIFY(!page.findChild<QCheckBox*>("activatePerformanceWindow")->isChecked());
+        QCOMPARE(page.findChild<QSpinBox*>("performanceCountdown")->value(),5);
+        auto* start=page.findChild<QPushButton*>("startPerformanceButton");QVERIFY(!start->isEnabled());
+        page.findChild<QPushButton*>("refreshKeyboardsButton")->click();page.findChild<QPushButton*>("refreshWindowsButton")->click();
+        auto* keyboards=page.findChild<QComboBox*>("performanceKeyboard");auto* windows=page.findChild<QComboBox*>("performanceWindow");
+        QTRY_COMPARE(keyboards->count(),1);QTRY_COMPARE(windows->count(),1);QVERIFY(!start->isEnabled());
+        keyboards->setCurrentIndex(0);QVERIFY(!start->isEnabled());windows->setCurrentIndex(0);QVERIFY(start->isEnabled());
+        start->click();QVERIFY(page.findChild<QLabel*>("performanceState")->text().contains("没有可演奏音符"));
     }
     void performancePageNavigationAndReadonlyPreview() {
         rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(30);

@@ -2,24 +2,28 @@
 #include "core/music.h"
 #include "platform/output_discovery.h"
 #include "audio/audio_player.h"
+#include "playback/performance_controller.h"
 #include <QFutureWatcher>
 #include <QPointer>
 #include <QWidget>
 #include <memory>
 
-class QLabel; class QComboBox; class QDoubleSpinBox; class QSpinBox; class QPushButton; class QDialog;
+class QLabel; class QComboBox; class QDoubleSpinBox; class QSpinBox; class QPushButton; class QDialog; class QCheckBox; class QTimer; class QHideEvent;
 namespace rock {
 class PianoRoll;
-// Device/window discovery is live; key dispatch is not connected yet.
 class PerformancePage : public QWidget {
 public:
     explicit PerformancePage(QWidget* parent=nullptr,OutputDiscovery discovery={},AudioBackend backend=AudioBackend::System);
+    ~PerformancePage() override;
+    void stopPerformance();
+    void inheritPreviewPosition(double seconds);
     void setSong(std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result,
                  const QString& path,const Settings& settings);
     void setPreviewPosition(double seconds);
     double previewPosition() const{return position_;}
 protected:
     void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 private:
     PianoRoll* preview_{};
     QLabel *title_{},*metadata_{},*clock_{},*empty_{},*state_{};
@@ -37,6 +41,17 @@ private:
     std::shared_ptr<const Conversion> result_;
     bool fitPending_{true};
     double position_{};
+    PerformanceController controller_;
+    Settings sourceSettings_,playSettings_;
+    std::shared_ptr<const Conversion> sourceResult_;
+    QPushButton *start_{},*stop_{},*testKeys_{};
+    QCheckBox* activate_{};
+    QTimer* timer_{};
+    bool updating_{},running_{};
+    void updateControls();
+    void updatePerformance();
+    void startPerformance();
+    void retime();
     void refreshDevices(bool keyboards);
     void discoveryFinished(bool keyboards);
     void showKeyTestWindow();

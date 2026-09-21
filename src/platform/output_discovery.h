@@ -7,7 +7,7 @@
 namespace rock {
 struct OutputChoice {
     QString label;
-    QVariant id; // Keyboard: PnP instance ID. Window: pointer-sized HWND stored as quint64.
+    QVariant id; // Keyboard: Interception slot + hardware ID. Window: HWND as quint64.
     QString detail;
     quint32 processId{};
 };
