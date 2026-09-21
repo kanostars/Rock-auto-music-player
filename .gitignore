@@ -1,0 +1,10 @@
+.deps/
+build*/
+cmake-build-*/
+*.exe
+*.dll
+artifacts/
+.idea/
+**/__pycache__/
+tools/audio-extraction/bin/
+tools/audio-extraction/obj/

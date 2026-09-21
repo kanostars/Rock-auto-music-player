@@ -1,0 +1,41 @@
+<RCC>
+  <qresource prefix="/handpan">
+    <file alias="manifest.json">handpan/manifest.json</file>
+    <file alias="B_1.wav">handpan/B_1.wav</file>
+    <file alias="B_2.wav">handpan/B_2.wav</file>
+    <file alias="B_3.wav">handpan/B_3.wav</file>
+    <file alias="B_4.wav">handpan/B_4.wav</file>
+    <file alias="F_1.wav">handpan/F_1.wav</file>
+    <file alias="F_2.wav">handpan/F_2.wav</file>
+    <file alias="F_3.wav">handpan/F_3.wav</file>
+    <file alias="F_4.wav">handpan/F_4.wav</file>
+    <file alias="G_1.wav">handpan/G_1.wav</file>
+    <file alias="G_2.wav">handpan/G_2.wav</file>
+    <file alias="G_3.wav">handpan/G_3.wav</file>
+    <file alias="G_4.wav">handpan/G_4.wav</file>
+    <file alias="H_1.wav">handpan/H_1.wav</file>
+    <file alias="H_2.wav">handpan/H_2.wav</file>
+    <file alias="H_3.wav">handpan/H_3.wav</file>
+    <file alias="H_4.wav">handpan/H_4.wav</file>
+    <file alias="J_1.wav">handpan/J_1.wav</file>
+    <file alias="J_2.wav">handpan/J_2.wav</file>
+    <file alias="J_3.wav">handpan/J_3.wav</file>
+    <file alias="J_4.wav">handpan/J_4.wav</file>
+    <file alias="K_1.wav">handpan/K_1.wav</file>
+    <file alias="K_2.wav">handpan/K_2.wav</file>
+    <file alias="K_3.wav">handpan/K_3.wav</file>
+    <file alias="K_4.wav">handpan/K_4.wav</file>
+    <file alias="T_1.wav">handpan/T_1.wav</file>
+    <file alias="T_2.wav">handpan/T_2.wav</file>
+    <file alias="T_3.wav">handpan/T_3.wav</file>
+    <file alias="T_4.wav">handpan/T_4.wav</file>
+    <file alias="Y_1.wav">handpan/Y_1.wav</file>
+    <file alias="Y_2.wav">handpan/Y_2.wav</file>
+    <file alias="Y_3.wav">handpan/Y_3.wav</file>
+    <file alias="Y_4.wav">handpan/Y_4.wav</file>
+    <file alias="U_1.wav">handpan/U_1.wav</file>
+    <file alias="U_2.wav">handpan/U_2.wav</file>
+    <file alias="U_3.wav">handpan/U_3.wav</file>
+    <file alias="U_4.wav">handpan/U_4.wav</file>
+  </qresource>
+</RCC>
