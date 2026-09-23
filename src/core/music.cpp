@@ -185,6 +185,15 @@ int nearestTarget(int pitch) {
     for(int i=1;i<9;++i) if(std::abs(pitch-pitches[i])<std::abs(pitch-pitches[result])) result=i;
     return result;
 }
+namespace {
+int pitchClassTarget(int pitch) {
+    const int pitchClass=(pitch%12+12)%12;
+    int result=-1;
+    for(int i=0;i<static_cast<int>(pitches.size());++i)
+        if(pitches[i]%12==pitchClass&&(result<0||std::abs(pitch-pitches[i])<std::abs(pitch-pitches[result])))result=i;
+    return result; // Ascending targets break equal-distance ties toward the lower pitch.
+}
+}
 Settings defaultSettings(const Song& song) {
     Settings s;
     for(const auto& tr:song.tracks) {s.enabled.push_back(tr.channel!=9); s.solo.push_back(false);}
@@ -213,26 +222,26 @@ Conversion convert(const Song& song,const Settings& s,const NoteEdits& edits) {
     auto solo=[&](size_t i){return i<s.solo.size()?s.solo[i]:false;};
     bool anySolo=false;
     for(size_t i=0;i<song.tracks.size();++i) if(enabled(i)&&solo(i)) anySolo=true;
-    if(s.autoOctave) {
-        // Use the original participating tracks, independent of manual edits and
-        // nearest/skip mode. A shared octave shift preserves melodic intervals
-        // and harmony; do not fold individual notes into different octaves.
+    if(s.autoTranspose) {
+        // SIFT v0.1.6: prefer keeping pitch classes, then minimize octave movement.
+        // One shared transpose for participating original tracks keeps their tuning
+        // consistent. Manual targets/additions and nearest/skip mode do not bias it.
         std::array<int,128> histogram{};
         for(const auto& n:song.notes)
             if(!n.added&&enabled(n.track)&&(!anySolo||solo(n.track))) ++histogram.at(n.pitch);
         auto score=[&](int shift) {
-            long long error=0;
+            int kept=0;long long movement=0;
             for(int pitch=0;pitch<128;++pitch) if(histogram[pitch]) {
-                int delta=pitch+shift-pitches[nearestTarget(pitch+shift)];
-                error+=static_cast<long long>(histogram[pitch])*delta*delta;
+                const int adjusted=pitch+shift,target=pitchClassTarget(adjusted);
+                if(target>=0){kept+=histogram[pitch];movement+=static_cast<long long>(histogram[pitch])*std::abs(adjusted-pitches[target]);}
             }
-            return error;
+            return std::tuple{-kept,movement,std::abs(shift),shift};
         };
         auto best=score(0);
-        for(int shift=-120;shift<=120;shift+=12) {
-            auto error=score(shift);
-            if(error<best||(error==best&&std::abs(shift)<std::abs(out.octaveShift))) {
-                best=error;out.octaveShift=shift;
+        for(int shift=-12;shift<=12;++shift) {
+            auto candidate=score(shift);
+            if(candidate<best) {
+                best=candidate;out.transpose=shift;
             }
         }
     }
@@ -257,10 +266,10 @@ Conversion convert(const Song& song,const Settings& s,const NoteEdits& edits) {
         else if(!enabled(n.track)||(anySolo&&!solo(n.track))) {m.mapping=Mapping::Excluded; ++out.excluded;}
         else if(edit!=edits.end()) {m.mapping=Mapping::Edited;m.target=edit->second.target;++out.edited;}
         else {
-            int adjusted=n.pitch+out.octaveShift;
-            int target=nearestTarget(adjusted);
-            if(pitches[target]==adjusted) {m.mapping=Mapping::Exact; m.target=target; ++out.exact;}
-            else if(s.nearest) {m.mapping=Mapping::Approximate; m.target=target; ++out.approximate;}
+            int adjusted=n.pitch+out.transpose;
+            int target=pitchClassTarget(adjusted);
+            if(target>=0) {m.mapping=Mapping::Exact; m.target=target; ++out.exact;if(pitches[target]!=adjusted)++out.octaveFolded;}
+            else if(s.nearest) {m.mapping=Mapping::Approximate; m.target=nearestTarget(adjusted); ++out.approximate;}
             else {m.mapping=Mapping::Skipped; ++out.skipped;}
         }
         out.notes.push_back(m);

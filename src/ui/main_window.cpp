@@ -189,7 +189,7 @@ void MainWindow::buildUi(AudioBackend backend) {
     editBar->addStretch();auto* editHint=label("框选 / 拖动","muted");editHint->setToolTip("空白处拖动框选；Ctrl/Shift 追加选择；Ctrl+A 全选当前显示音符\n拖动选中音符可整体移动，拖动任一两端可批量调整时长\n↑/↓ 整体升降一个九键音级，B～U 为上下边界；Delete 批量删除；Esc 取消\n添加模式下点击空白创建音符，再点按钮或 Esc 退出");editBar->addWidget(editHint);cl->addLayout(editBar);
     roll_=new PianoRoll;cl->addWidget(roll_,1);
     auto* legend=new QHBoxLayout;auto* legendText=label("● 原样保留    ● 近似转换    ● 同键冲突","muted");legendText->setTextFormat(Qt::RichText);
-    legendText->setText("<span style='color:#189e91'>●</span> 准确　<span style='color:#d5a14a'>●</span> 近似　<span style='color:#6582bd'>●</span> 已编辑　<span style='color:#d4656d'>●</span> 冲突");legend->addWidget(legendText);legend->addStretch();
+    legendText->setText("<span style='color:#189e91'>●</span> 同音名　<span style='color:#d5a14a'>●</span> 近似　<span style='color:#6582bd'>●</span> 已编辑　<span style='color:#d4656d'>●</span> 冲突");legend->addWidget(legendText);legend->addStretch();
     auto* minus=button("−");auto* plus=button("＋");minus->setFixedWidth(34);plus->setFixedWidth(34);zoomText_=label("80 px/s","muted");legend->addWidget(minus);legend->addWidget(zoomText_);legend->addWidget(plus);cl->addLayout(legend);
     connect(minus,&QPushButton::clicked,this,[this]{roll_->setZoom(roll_->zoom()/1.4);});connect(plus,&QPushButton::clicked,this,[this]{roll_->setZoom(roll_->zoom()*1.4);});
     zoomText_->setMinimumWidth(64);
@@ -226,10 +226,10 @@ void MainWindow::buildUi(AudioBackend backend) {
     auto* right=new QFrame;right->setObjectName("panel");right->setMinimumWidth(270);right->setMaximumWidth(340);
     auto* rl=new QVBoxLayout(right);rl->setContentsMargins(6,4,6,10);tabs_=new QTabWidget;rl->addWidget(tabs_);
     auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);auto* settings=new QWidget;settings->setObjectName("settingsPage");settings->setStyleSheet("QWidget#settingsPage {background:white;}");auto* sl=new QVBoxLayout(settings);sl->setContentsMargins(14,18,14,14);sl->setSpacing(13);
-    sl->addWidget(label("音域适配","section"));octaveMode_=new QComboBox;octaveMode_->setObjectName("octaveMode");octaveMode_->addItems({"自动八度适配（推荐）","保持原始音高"});sl->addWidget(octaveMode_);
-    octaveInfo_=label("导入后显示整体八度调整","muted");octaveInfo_->setObjectName("octaveInfo");octaveInfo_->setWordWrap(true);sl->addWidget(octaveInfo_);
+    sl->addWidget(label("音高适配","section"));octaveMode_=new QComboBox;octaveMode_->setObjectName("octaveMode");octaveMode_->addItems({"自动移调适配（推荐）","不整体移调（仍折叠八度）"});sl->addWidget(octaveMode_);
+    octaveInfo_=label("导入后显示整体移调与八度折叠","muted");octaveInfo_->setObjectName("octaveInfo");octaveInfo_->setWordWrap(true);sl->addWidget(octaveInfo_);
     sl->addWidget(label("适配后仍不支持的音符","section"));strategy_=new QComboBox;strategy_->setObjectName("strategyCombo");strategy_->addItems({"转换成最近音","直接跳过"});sl->addWidget(strategy_);
-    auto* help=label("先整体调整八度，保留音程；再对不支持的音取最近音（等距取低）或跳过。宽音域仍可能需要简化，手工修改保留。","muted");help->setWordWrap(true);sl->addWidget(help);
+    auto* help=label("自动尝试 −12～+12 半音移调，优先保留同音名。逐音选择最近的同音名八度；无同音名时才取最近音或跳过，等距取低。手工修改保留。","muted");help->setWordWrap(true);sl->addWidget(help);
     sl->addSpacing(8);sl->addWidget(label("节奏与速度","section"));tempoMode_=new QComboBox;tempoMode_->setObjectName("tempoMode");tempoMode_->addItems({"跟随 MIDI 原曲速度","使用固定 BPM"});sl->addWidget(tempoMode_);
     auto* form=new QFormLayout;form->setSpacing(10);bpm_=new RangeDoubleSpinBox("固定 BPM");bpm_->setObjectName("bpmSpin");bpm_->setRange(20,400);bpm_->setDecimals(1);bpm_->setValue(120);bpm_->setEnabled(false);
     speed_=new RangeDoubleSpinBox("播放倍率");speed_->setObjectName("speedSpin");speed_->setRange(.25,3);speed_->setSingleStep(.05);speed_->setDecimals(2);speed_->setValue(1);speed_->setSuffix(" ×");
@@ -270,11 +270,18 @@ void MainWindow::buildUi(AudioBackend backend) {
     cancelButton_=button("取消导入");cancelButton_->hide();statusLine->addWidget(cancelButton_);connect(cancelButton_,&QPushButton::clicked,this,[this]{if(cancel_)cancel_->store(true);});
     statusLine->addWidget(label("手碟采样试听 · 暂未连接键盘输出","muted"));outer->addWidget(statusPanel_);
     performancePage_=new PerformancePage(nullptr,{},backend);pages_->addWidget(performancePage_);
+    connect(performancePage_,&PerformancePage::sourcePositionChanged,this,[this](double seconds){
+        position_=std::clamp(seconds,0.0,currentResult()?currentResult()->duration:0.0);
+        roll_->setPlayhead(position_,true);
+        // Do not echo this update back through the other tempo conversion.
+        clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
+    });
     connect(navigation,&QButtonGroup::idClicked,this,[this](int page){
         if(pages_->currentIndex()==page)return;
         if(page==1){pausePreview();if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();}
+        else performancePage_->stopPerformance(); // Publish the final worker position before returning.
         pages_->setCurrentIndex(page);
-        if(page==1)performancePage_->inheritPreviewPosition(position_);
+        if(page==0)roll_->setPlayhead(position_,true);
     });
 }
 
@@ -355,6 +362,7 @@ void MainWindow::importFiles(const QStringList& paths) {
 }
 void MainWindow::selectSong(int index) {
     if(index<0||index>=static_cast<int>(sessions_.size()))return;
+    performancePage_->stopPerformance();
     pausePreview(true);current_=index;updating_=true;deleteMode_->setChecked(false);addNote_->setChecked(false);
     const auto& s=sessions_[index];const auto& settings=s.settings;
     songTitle_->setText(QFileInfo(s.path).completeBaseName());
@@ -366,7 +374,7 @@ void MainWindow::selectSong(int index) {
         row->setToolTip(0,QString("原始轨道 %1 · 通道 %2\n%3").arg(tr.source+1).arg(tr.channel+1).arg(tr.channel==9?"可能为打击乐，默认排除；可手动勾选。":"勾选参与转换，取消勾选即静音。"));
         filter_->addItem(name,static_cast<int>(i));
     }
-    octaveMode_->setCurrentIndex(settings.autoOctave?0:1);
+    octaveMode_->setCurrentIndex(settings.autoTranspose?0:1);
     strategy_->setCurrentIndex(settings.nearest?0:1);tempoMode_->setCurrentIndex(settings.fixedTempo?1:0);bpm_->setValue(settings.bpm);speed_->setValue(settings.speed);hold_->setValue(settings.holdMs);gap_->setValue(settings.gapMs);
     updating_=false;settingsPending_=false;dirty_->setText("设置已应用");apply_->setEnabled(true);
     roll_->setTrackFilter(-1);refreshResult(true);
@@ -388,7 +396,7 @@ bool MainWindow::validateParameters() {
 }
 void MainWindow::applySettings() {
     if(current_<0||!validateParameters())return;auto& s=sessions_[current_].settings;
-    s.autoOctave=octaveMode_->currentIndex()==0;
+    s.autoTranspose=octaveMode_->currentIndex()==0;
     s.nearest=strategy_->currentIndex()==0;s.fixedTempo=tempoMode_->currentIndex()==1;s.bpm=bpm_->value();s.speed=speed_->value();s.holdMs=hold_->value();s.gapMs=gap_->value();
     settingsPending_=false;dirty_->setText("设置已应用");recalculate();
 }
@@ -398,6 +406,7 @@ void MainWindow::recalculate(bool fit) {
 }
 void MainWindow::refreshResult(bool fit) {
     const auto& s=sessions_[current_];const auto& r=*s.result;
+    const QSignalBlocker positionBlocker(performancePage_);
     performancePage_->setSong(s.song,s.result,s.path,s.settings);
     std::vector<int> added(s.song->tracks.size());int originalCount=0,addedCount=0;
     for(size_t i=0;i<s.song->notes.size();++i) {
@@ -407,7 +416,7 @@ void MainWindow::refreshResult(bool fit) {
     }
     subtitle_->setText(QString("SMF %1 / %2 PPQ · %3 个音轨 · <span style='color:#516c7c'>%4 个原始音符</span>"
         " · <span style='color:#526fa8'>新增 %5</span>"
-        " · <span style='color:#178e80'>准确映射 %6</span>"
+        " · <span style='color:#178e80'>同音名 %6</span>"
         " · <span style='color:#a77722'>近似转换 %7</span>"
         " · <span style='color:#748593'>已跳过 %8</span>"
         " · <span style='color:#bd4f5b'>同键冲突 %9</span>")
@@ -418,7 +427,8 @@ void MainWindow::refreshResult(bool fit) {
         tracks_->topLevelItem(i)->setText(2,added[i]?QString("%1 + %2").arg(s.song->tracks[i].count).arg(added[i]):QString::number(s.song->tracks[i].count));
         tracks_->topLevelItem(i)->setToolTip(2,"原始音符数 + 当前手工新增音符数");
     }
-    octaveInfo_->setText(s.settings.autoOctave?QString("已应用：整体 %1 半音（%2 八度）\n按当前参与音轨计算，准确映射包含八度适配。").arg(r.octaveShift).arg(r.octaveShift/12):"已应用：保持原始音高（0 半音）");
+    octaveInfo_->setText(QString("已应用：%1，整体 %2 半音\n同音名映射 %3（其中八度折叠 %4），近似替代 %5。")
+        .arg(s.settings.autoTranspose?"自动移调":"不整体移调").arg(r.transpose).arg(r.exact).arg(r.octaveFolded).arg(r.approximate));
     auto selected=roll_->selectedSources();roll_->setMusic(s.song,s.result);roll_->selectSources(selected);if(fit)roll_->fitAll();
     summary_->setText(QString("映射 %1 · 手改 %2 · 删除 %3 · 和弦 %4 · 排除 %5").arg(r.exact+r.approximate+r.edited).arg(r.edited).arg(r.deleted).arg(r.chords).arg(r.excluded));
     play_->setEnabled(r.exact+r.approximate+r.edited>0);stop_->setEnabled(r.exact+r.approximate+r.edited>0);
@@ -458,9 +468,11 @@ void MainWindow::showNote(int source) {
     if(current_<0)return;const auto& s=sessions_[current_];if(source>=static_cast<int>(s.song->notes.size()))return;
     const auto& n=s.song->notes[source];const auto& m=s.result->notes[source];
     QString target=m.target<0?"未映射":QString("%1  /  %2").arg(QChar(keys[m.target])).arg(noteName(pitches[m.target]));
-    QString reason=m.mapping==Mapping::Edited?(n.added?"手工新增（重新转换会保留）":"手工编辑（重新转换会保留）"):m.mapping==Mapping::Deleted?"已手工删除（可撤销）":m.mapping==Mapping::Exact?(s.result->octaveShift?"八度适配后准确映射":"原样保留"):m.mapping==Mapping::Approximate?"转换成相近音":m.mapping==Mapping::Skipped?"适配后仍不在九音范围，已跳过":"音轨未参与转换";
+    QString reason=m.mapping==Mapping::Edited?(n.added?"手工新增（重新转换会保留）":"手工编辑（重新转换会保留）"):m.mapping==Mapping::Deleted?"已手工删除（可撤销）":m.mapping==Mapping::Exact?(pitches[m.target]!=n.pitch+s.result->transpose?"同音名八度折叠":s.result->transpose?"整体移调后准确映射":"原样保留"):m.mapping==Mapping::Approximate?"无同音名，替代为最近音":m.mapping==Mapping::Skipped?"无同音名，按当前策略跳过":"音轨未参与转换";
     if(m.mapping==Mapping::Exact||m.mapping==Mapping::Approximate||m.mapping==Mapping::Skipped)
-        reason+=QString("\n整体八度调整：%1 半音").arg(s.result->octaveShift);
+        reason+=QString("\n整体移调：%1 半音").arg(s.result->transpose);
+    if(m.mapping==Mapping::Exact&&pitches[m.target]!=n.pitch+s.result->transpose)
+        reason+=QString("\n移调后再折叠：%1 半音").arg(pitches[m.target]-n.pitch-s.result->transpose);
     details_->setText(QString("原始音高\n%1  ·  MIDI %2\n\n目标按键 / 音高\n%3\n\n转换结果\n%4\n\n开始时间     %5 s\n持续时间     %6 s\n原始力度     %7\n\n音轨 %8 / 通道 %9%10")
         .arg(noteName(n.pitch)).arg(n.pitch).arg(target,reason).arg(m.start,0,'f',3).arg(m.duration,0,'f',3).arg(n.velocity)
         .arg(s.song->tracks[n.track].source+1).arg(s.song->tracks[n.track].channel+1)
@@ -473,8 +485,8 @@ void MainWindow::showDiagnostics() {
     dialog->setStyleSheet("QDialog#conversionReport {background:#eef3f5;} QDialog#conversionReport QLabel {color:#203d4e;} QTableWidget {background:white; color:#203d4e; alternate-background-color:#f5f9fa; selection-background-color:#d9eeea; selection-color:#203d4e;}");
     auto* layout=new QVBoxLayout(dialog);
     QString warnings;for(const auto& warning:s.song->warnings)warnings+=QString::fromUtf8(warning)+"\n";
-    warnings.prepend(QString("整体八度调整：%1 半音（准确映射包含八度适配）\n").arg(s.result->octaveShift));
-    auto* summary=new QLabel(QString("准确 %1 · 近似 %2 · 跳过 %3 · 排除 %4 · 同键冲突 %5\n手工编辑 %6 · 手工删除 %7\n%8\n包含准确映射在内的全部音符，按开始时间排列；每页显示 200 条。\n双击记录定位音符（已删除或已排除音符仅显示详情）。")
+    warnings.prepend(QString("整体移调：%1 半音；同音名映射 %2，其中八度折叠 %3（不计入近似替代）。\n").arg(s.result->transpose).arg(s.result->exact).arg(s.result->octaveFolded));
+    auto* summary=new QLabel(QString("同音名 %1 · 近似 %2 · 跳过 %3 · 排除 %4 · 同键冲突 %5\n手工编辑 %6 · 手工删除 %7\n%8\n全部音符按开始时间排列；每页显示 200 条。\n双击记录定位音符（已删除或已排除音符仅显示详情）。")
         .arg(s.result->exact).arg(s.result->approximate).arg(s.result->skipped).arg(s.result->excluded).arg(s.result->conflicts).arg(s.result->edited).arg(s.result->deleted).arg(warnings));summary->setWordWrap(true);summary->setTextFormat(Qt::PlainText);layout->addWidget(summary);
     auto* table=new QTableWidget(0,6);table->setObjectName("conversionTable");table->setHorizontalHeaderLabels({"开始 / 秒","原始音","目标音","目标键","音轨","状态"});table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);table->horizontalHeader()->setSectionResizeMode(5,QHeaderView::ResizeToContents);table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setAlternatingRowColors(true);layout->addWidget(table);
     std::vector<const MappedNote*> ordered;ordered.reserve(s.result->notes.size());
@@ -496,7 +508,7 @@ void MainWindow::showDiagnostics() {
         table->setUpdatesEnabled(false);table->clearContents();table->setRowCount(end-begin);
         for(int index=begin;index<end;++index) {
             const auto& m=*ordered[index];const auto& n=song->notes[m.source];const int row=index-begin;
-            QString state=m.mapping==Mapping::Deleted?"手工删除":m.mapping==Mapping::Excluded?"音轨已排除":m.mapping==Mapping::Skipped?"无法映射，跳过":m.mapping==Mapping::Edited?"手工编辑":m.mapping==Mapping::Exact?(result->octaveShift?"八度适配 · 准确":"原音准确映射"):"近似转换";
+            QString state=m.mapping==Mapping::Deleted?"手工删除":m.mapping==Mapping::Excluded?"音轨已排除":m.mapping==Mapping::Skipped?"无同音名，跳过":m.mapping==Mapping::Edited?"手工编辑":m.mapping==Mapping::Exact?(pitches[m.target]!=n.pitch+result->transpose?"同音名 · 八度折叠":result->transpose?"整体移调 · 准确":"原音准确映射"):"无同音名 · 近似替代";
             if(n.added&&m.mapping==Mapping::Edited)state="手工新增";
             if(m.conflict)state+=" · 同键过密";
             QStringList values{QString::number(m.start,'f',3),noteName(n.pitch),m.target<0?"—":noteName(pitches[m.target]),m.target<0?"—":QString(QChar(keys[m.target])),QString::number(song->tracks[n.track].source+1),state};
@@ -523,7 +535,10 @@ void MainWindow::pausePreview(bool reset) {
     if(wasPlaying&&currentResult()){position_=std::min(currentResult()->duration,audio_.position());roll_->setPlayhead(position_);status_->setText(audio_.finished()?"试听结束。":"试听已暂停，再次点击可从当前位置继续。");}
     if(reset){position_=0;roll_->setPlayhead(0);}refreshClock();
 }
-void MainWindow::refreshClock() {clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));}
+void MainWindow::refreshClock() {
+    clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
+    if(performancePage_){const QSignalBlocker blocker(performancePage_);performancePage_->inheritPreviewPosition(position_);}
+}
 void MainWindow::addNote(double start,int target) {
     if(current_<0||busy_||timer_.isActive()||roll_->isEditing()||!std::isfinite(start)||start<0||target<0||target>=9)return;
     auto& s=sessions_[current_];

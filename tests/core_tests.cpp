@@ -38,13 +38,13 @@ int main(int argc,char** argv) {
         check(r.exact==9&&r.approximate==0,"nine exact notes");
         for(int i=0;i<9;++i) {check(r.notes[i].target==i,"nine keys order");check(close(r.notes[i].start,i*.5),"PPQ seconds");}
         for(auto [source,target]:{std::pair{54,2}, {61,6},{48,0},{50,1},{72,8},{36,0}}) check(nearestTarget(source)==target,"nearest/tie/endpoint");
-        smf::MidiFile unsupported;unsupported.setTPQ(480);for(int i=0;i<6;++i)add(unsupported,0,0,std::array{54,61,48,50,72,36}[i],i*480);
-        auto u=parseMidi(serialize(unsupported));auto us=defaultSettings(u);check(convert(u,us).approximate==6,"nearest maps unsupported");
+        smf::MidiFile unsupported;unsupported.setTPQ(480);for(int i=0;i<6;++i)add(unsupported,0,0,std::array{54,61,63,56,58,66}[i],i*480);
+        auto u=parseMidi(serialize(unsupported));auto us=defaultSettings(u);us.autoTranspose=false;check(convert(u,us).approximate==6,"nearest maps unsupported pitch classes");
         us.nearest=false;check(convert(u,us).skipped==6,"skip unsupported");check(u.notes[0].pitch==54,"source immutable");
 
         auto pirates=parseMidi(read(std::filesystem::path(ROCK_FIXTURES)/"pirates.mid"));
         auto popt=defaultSettings(pirates);auto adapted=convert(pirates,popt);
-        check(pirates.notes.size()==241&&adapted.octaveShift==-12,"uploaded MIDI selects one octave down");
+        check(pirates.notes.size()==241&&adapted.transpose==-12,"uploaded MIDI selects one octave down");
         check(adapted.exact==241&&adapted.approximate==0&&adapted.skipped==0,"uploaded melody fits without quantization");
         std::vector<MappedNote> ordered=adapted.notes;
         std::stable_sort(ordered.begin(),ordered.end(),[](const auto& a,const auto& b){return a.startTick<b.startTick;});
@@ -56,32 +56,55 @@ int main(int argc,char** argv) {
         const std::array<int,9> expectedCounts{0,4,9,16,69,34,39,35,35};
         std::array<int,9> counts{};for(const auto& n:adapted.notes)++counts[n.target];
         check(counts==expectedCounts,"uploaded song distributes across eight keys");
-        popt.autoOctave=false;auto oldMapping=convert(pirates,popt);
+        popt.autoTranspose=false;auto noTranspose=convert(pirates,popt);
+        check(noTranspose.exact==241&&noTranspose.octaveFolded>0,"zero transpose still folds matching pitch classes");
         for(size_t i=0;i<adapted.notes.size();++i) {
-            check(oldMapping.notes[i].target==8,"original absolute mapping reproduces U collapse");
-            check(close(adapted.notes[i].start,oldMapping.notes[i].start)&&close(adapted.notes[i].duration,oldMapping.notes[i].duration),"octave adaptation preserves MIDI timing");
+            check(pitches[noTranspose.notes[i].target]%12==pirates.notes[i].pitch%12,"folding preserves the note name rather than clamping to U");
+            check(close(adapted.notes[i].start,noTranspose.notes[i].start)&&close(adapted.notes[i].duration,noTranspose.notes[i].duration),"adaptation preserves MIDI timing");
         }
-        popt.autoOctave=true;popt.nearest=false;
+        popt.autoTranspose=true;popt.nearest=false;
         check(convert(pirates,popt).exact==241,"skip policy runs after octave adaptation");
         NoteEdits pirateEdits{{0,{0,100,0,false}}};
         auto manual=convert(pirates,popt,pirateEdits);
-        check(manual.octaveShift==-12&&manual.notes[0].target==0&&manual.edited==1,"octave changes preserve manual targets");
+        check(manual.transpose==-12&&manual.notes[0].target==0&&manual.edited==1,"octave changes preserve manual targets");
         check(pirates.notes[0].pitch==69,"octave adaptation preserves original MIDI pitches");
         auto raised=song;for(auto& n:raised.notes)n.pitch+=24;
-        check(convert(raised,defaultSettings(raised)).octaveShift==-24,"multiple octaves down");
+        auto raisedResult=convert(raised,defaultSettings(raised));
+        check(raisedResult.transpose>=-12&&raisedResult.transpose<=12&&raisedResult.exact==9&&raisedResult.octaveFolded>0,"high range uses bounded transpose plus octave folding");
         auto lowered=song;for(auto& n:lowered.notes)n.pitch-=24;
-        check(convert(lowered,defaultSettings(lowered)).octaveShift==24,"multiple octaves up");
-        check(convert(song,settings).octaveShift==0,"playable originals retain octave");
+        auto loweredResult=convert(lowered,defaultSettings(lowered));
+        check(loweredResult.transpose>=-12&&loweredResult.transpose<=12&&loweredResult.exact==9&&loweredResult.octaveFolded>0,"low range uses bounded transpose plus octave folding");
+        check(convert(song,settings).transpose==0,"playable originals retain octave");
         auto filtered=pirates;filtered.tracks.push_back({"low",1,0,1});filtered.notes.push_back({1,45,100,0,100});
         auto fs=defaultSettings(filtered);fs.solo[1]=true;
-        check(convert(filtered,fs).octaveShift==0,"solo selection determines adaptation");
+        check(convert(filtered,fs).transpose==0,"solo selection determines adaptation");
         fs.solo[1]=false;fs.enabled[1]=false;
-        check(convert(filtered,fs).octaveShift==-12,"muted tracks do not affect adaptation");
-        fs.enabled[0]=false;check(convert(filtered,fs).octaveShift==0,"no active notes leaves zero shift");
+        check(convert(filtered,fs).transpose==-12,"muted tracks do not affect adaptation");
+        fs.enabled[0]=false;check(convert(filtered,fs).transpose==0,"no active notes leaves zero shift");
         Song wide=song;wide.notes={{0,0,100,0,100},{0,127,100,480,580}};
         auto wideSettings=defaultSettings(wide);auto wideNearest=convert(wide,wideSettings);
         wideSettings.nearest=false;auto wideSkip=convert(wide,wideSettings);
-        check(wideNearest.octaveShift==wideSkip.octaveShift&&wideSkip.skipped>0,"unfittable range still honors skip, independent of shift selection");
+        check(wideNearest.transpose==wideSkip.transpose&&wideSkip.exact==2&&wideSkip.octaveFolded==2,"wide-range same-name notes survive even in skip mode");
+        // Confirm octave-first selection throughout MIDI's range, including the two E/A pads.
+        Song sweep=song;sweep.notes.clear();sweep.endTick=128*480;
+        for(int p=0;p<128;++p)sweep.notes.push_back({0,p,100,p*480,p*480+100});
+        auto sweepSettings=defaultSettings(sweep);sweepSettings.autoTranspose=false;
+        auto sweepNearest=convert(sweep,sweepSettings);sweepSettings.nearest=false;auto sweepSkip=convert(sweep,sweepSettings);
+        const std::array<int,12> sameName{6,-1,7,-1,1,2,-1,3,-1,0,-1,5};
+        for(int p=0;p<128;++p){int expected=sameName[p%12];
+            if(p%12==4&&p>=64)expected=8;if(p%12==9&&p>=57)expected=4;
+            check(sweepSkip.notes[p].target==expected,"all 128 pitches: octave folding and unsupported-class skipping");
+            check(sweepNearest.notes[p].target==(expected<0?nearestTarget(p):expected),"all 128 pitches: same-name priority before substitution");
+            check(sweepNearest.notes[p].mapping==(expected<0?Mapping::Approximate:Mapping::Exact),"folding is not chromatic substitution");}
+        check(sweepNearest.notes[48].target==6&&sweepNearest.notes[50].target==7,"C3/D3 fold to T/Y, not B/F");
+        check(sweepNearest.notes[61].target==6,"C sharp midpoint substitutes downward to C");
+        Song sharp=song;sharp.notes.clear();
+        for(int p: {61,63,65,66,68,70,72})sharp.notes.push_back({0,p,100,static_cast<int>(sharp.notes.size())*480,static_cast<int>(sharp.notes.size())*480+100});
+        auto sharpSettings=defaultSettings(sharp);auto sharpResult=convert(sharp,sharpSettings);
+        check(sharpResult.transpose==-1&&sharpResult.exact==7&&sharpResult.approximate==0,"chromatic -1 transpose retains a C-sharp-major scale");
+        sharpSettings.nearest=false;check(convert(sharp,sharpSettings).transpose==-1,"recommendation is independent of substitute/skip policy");
+        sharp.notes={{0,61,100,0,100}};check(convert(sharp,sharpSettings).transpose==-1,"equal retention/movement/absolute transpose chooses lower shift");
+        sharp.notes.clear();check(convert(sharp,sharpSettings).transpose==0,"empty selection keeps zero transpose");
         std::cout<<"Pirates: 241/241 keys match, shift -12, U 35/241 (was 241/241)\n";
 
         smf::MidiFile tempo;tempo.setTPQ(480);tempo.addTrack();tempo.addTempo(0,0,120);tempo.addTempo(0,480,60);add(tempo,1,0,60,240,480);
@@ -128,7 +151,7 @@ int main(int argc,char** argv) {
             additionEdits[i]={i*480,(i+1)*480,0,false};
         }
         auto withAdd=convert(additions,additionSettings,additionEdits);
-        check(withAdd.octaveShift==beforeAdd.octaveShift&&withAdd.notes[0].target==beforeAdd.notes[0].target,"new notes do not change original octave fitting");
+        check(withAdd.transpose==beforeAdd.transpose&&withAdd.notes[0].target==beforeAdd.notes[0].target,"new notes do not change original octave fitting");
         check(withAdd.edited==12&&withAdd.notes[12].target==0&&close(withAdd.duration,6.5),"additions retain requested key and extend duration");
         auto undoAdd=convert(additions,additionSettings);
         check(undoAdd.edited==0&&undoAdd.deleted==0&&undoAdd.excluded==0&&close(undoAdd.duration,.5),"undone additions are dormant, with original statistics and duration");

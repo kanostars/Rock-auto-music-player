@@ -141,6 +141,7 @@ void PerformancePage::setPreviewPosition(double seconds) {
     position_=std::clamp(std::isfinite(seconds)?seconds:0.0,0.0,result_?result_->duration:0.0);
     preview_->setPlayhead(position_,true);
     clock_->setText(previewTimeText(position_)+" / "+previewTimeText(result_?result_->duration:0));
+    emit sourcePositionChanged(song_?mapPosition(*song_,playSettings_,sourceSettings_,position_):position_);
 }
 void PerformancePage::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);if(fitPending_){preview_->fitAll();fitPending_=false;}preview_->setPlayhead(position_,true);

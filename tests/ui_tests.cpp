@@ -55,16 +55,39 @@ private slots:
         QVERIFY(preview->horizontalScrollBar()->value()>0);QVERIFY(!preview->editingEnabled());
         page->setPreviewPosition(7.25);QTest::mouseClick(outputTab,Qt::LeftButton);QCOMPARE(page->previewPosition(),7.25); // Current tab does not reset a local seek.
         QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(outputTab,Qt::LeftButton);
-        QCOMPARE(page->previewPosition(),20.375);QCOMPARE(outputClock->text(),editorClock->text());
+        QCOMPARE(page->previewPosition(),7.25);QCOMPARE(outputClock->text(),editorClock->text());
         QTest::mouseClick(editorTab,Qt::LeftButton);auto* play=w.findChild<QPushButton*>("playButton");
         QTest::mouseClick(play,Qt::LeftButton);QTest::qWait(80);QTest::mouseClick(go,Qt::LeftButton);
-        QVERIFY(page->previewPosition()>20.375);QCOMPARE(outputClock->text(),editorClock->text());QVERIFY(play->text().contains("手碟试听"));
+        QVERIFY(page->previewPosition()>7.25);QCOMPARE(outputClock->text(),editorClock->text());QVERIFY(play->text().contains("手碟试听"));
         auto stoppedAt=page->previewPosition();QTest::qWait(35);QCOMPARE(page->previewPosition(),stoppedAt);
         QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(w.findChild<QPushButton*>("expandTrackButton"),Qt::LeftButton);
         auto* detached=w.findChild<QWidget*>("trackWindow");QVERIFY(detached->isVisible());
         QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,5.125)));
         QTest::mouseClick(go,Qt::LeftButton);QVERIFY(!detached->isVisible());QCOMPARE(pages->currentIndex(),1);QCOMPARE(page->previewPosition(),5.125);
         w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/empty.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);QCOMPARE(page->previewPosition(),0.0);
+    }
+    void sharedPositionBothDirectionsAndTempoChanges() {
+        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/nine-keys.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        auto* page=w.findChild<rock::PerformancePage*>("performancePage");
+        auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");auto* preview=w.findChild<rock::PianoRoll*>("performanceRoll");
+        auto* editor=w.findChild<QPushButton*>("editorPageButton");auto* output=w.findChild<QPushButton*>("performancePageButton");
+        auto* clock=w.findChild<QLabel*>("previewClock");auto* outputClock=w.findChild<QLabel*>("performanceClock");
+        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,1.375)));
+        QCOMPARE(page->previewPosition(),1.375);QCOMPARE(clock->text(),outputClock->text());
+        output->click();QVERIFY(QMetaObject::invokeMethod(preview,"seekRequested",Qt::DirectConnection,Q_ARG(double,2.125)));
+        QCOMPARE(clock->text(),outputClock->text());editor->click();QVERIFY(clock->text().startsWith("00:02.12"));
+        auto* mode=page->findChild<QComboBox*>("performanceTempoMode");auto* bpm=page->findChild<QDoubleSpinBox*>("performanceBpm");
+        output->click();mode->setCurrentIndex(1);bpm->setValue(60);
+        QCOMPARE(page->previewPosition(),4.25);QVERIFY(clock->text().startsWith("00:02.12"));
+        page->setPreviewPosition(3.75);QVERIFY(clock->text().startsWith("00:01.87"));
+        for(int i=0;i<8;++i){editor->click();output->click();QCOMPARE(page->previewPosition(),3.75);}
+        // A reset in the workbench also resets the hidden output preview.
+        editor->click();w.findChild<QPushButton*>("stopButton")->click();QCOMPARE(page->previewPosition(),0.0);
+        QVERIFY(clock->text().startsWith("00:00.00"));output->click();QCOMPARE(page->previewPosition(),0.0);
+        // Loading another song cannot carry the previous song's playhead back into the workbench.
+        page->setPreviewPosition(3);w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/studio-demo.mid"});
+        QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);QCOMPARE(page->previewPosition(),0.0);QVERIFY(clock->text().startsWith("00:00.00"));
     }
     void handpanTestKeysMouseAndFocus() {
         rock::HandpanTestDialog dialog(nullptr,rock::AudioBackend::NullTest);dialog.show();dialog.activateWindow();
@@ -334,13 +357,13 @@ private slots:
             int rh=std::max(14,(roll->viewport()->height()-44)/10);
             return QPoint(qRound(92+seconds*roll->zoom()-roll->horizontalScrollBar()->value()),44+(8-target)*rh+rh/2);
         };
-        const int shift=w.currentResult()->octaveShift;
+        const int shift=w.currentResult()->transpose;
         QTest::mouseClick(add,Qt::LeftButton);QVERIFY(add->isChecked());QVERIFY(roll->addMode());
         QTest::mouseClick(roll->viewport(),Qt::LeftButton,Qt::NoModifier,point(4.5,8));
         QCOMPARE(w.currentResult()->notes.size(),size_t(10));QCOMPARE(roll->selectedSource(),9);
         const auto created=w.currentResult()->notes[9];QCOMPARE(created.target,8);
         QVERIFY(std::abs(created.start-4.5)<.002);QVERIFY(std::abs(created.duration-.5)<.002);
-        QCOMPARE(w.currentResult()->octaveShift,shift);QCOMPARE(w.currentResult()->edited,1);
+        QCOMPARE(w.currentResult()->transpose,shift);QCOMPARE(w.currentResult()->edited,1);
         QVERIFY(w.findChild<QLabel*>("noteDetails")->text().contains("手工新增"));
         // Existing notes remain editable; clicking one does not create a duplicate.
         QTest::mouseClick(roll->viewport(),Qt::LeftButton,Qt::NoModifier,point(4.7,8));QCOMPARE(w.currentResult()->notes.size(),size_t(10));
@@ -368,7 +391,7 @@ private slots:
         auto* speed=w.findChild<QDoubleSpinBox*>("speedSpin");speed->setValue(2);
         QTest::mouseClick(w.findChild<QPushButton*>("primary"),Qt::LeftButton);
         QVERIFY(std::abs(w.currentResult()->notes[10].start-2.25)<.002);QVERIFY(std::abs(w.currentResult()->notes[10].duration-.25)<.002);
-        QCOMPARE(w.currentResult()->notes[9].target,-1);QCOMPARE(w.currentResult()->octaveShift,shift);
+        QCOMPARE(w.currentResult()->notes[9].target,-1);QCOMPARE(w.currentResult()->transpose,shift);
         roll->setZoom(80);QTest::mouseClick(add,Qt::LeftButton);
         QTest::qWait(25);QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/12-add-notes.png"));
         w.resize(1120,740);QTest::qWait(25);QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/13-add-notes-compact.png"));
@@ -475,7 +498,7 @@ private slots:
         auto song=std::make_shared<rock::Song>();song->ppq=480;song->tempos={{0,500000,0}};
         song->tracks={{"one",0,0,2},{"two",1,1,2}};
         song->notes={{0,45,100,480,960},{1,52,100,480,960},{0,54,100,960,1440},{1,57,100,960,1440}};song->endTick=1440;
-        auto settings=rock::defaultSettings(*song);settings.autoOctave=false;settings.nearest=false;
+        auto settings=rock::defaultSettings(*song);settings.autoTranspose=false;settings.nearest=false;
         auto result=std::make_shared<rock::Conversion>(rock::convert(*song,settings));
         rock::PianoRoll roll;roll.resize(700,450);roll.show();QTest::qWait(25);roll.setMusic(song,result);roll.setZoom(160);roll.setTrackFilter(0);
         int deletes=0,edits=0;std::vector<rock::MappedNote> batch;
@@ -581,16 +604,17 @@ private slots:
         rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();
         w.importFiles({qEnvironmentVariable("ROCK_FIXTURES")+"/pirates.mid"});
         QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
-        QVERIFY(w.currentResult());QCOMPARE(w.currentResult()->octaveShift,-12);
+        QVERIFY(w.currentResult());QCOMPARE(w.currentResult()->transpose,-12);
         QCOMPARE(w.currentResult()->exact,241);QCOMPARE(w.currentResult()->notes[0].target,4);
         auto* info=w.findChild<QLabel*>("octaveInfo");QVERIFY(info->text().contains("-12"));
         auto* mode=w.findChild<QComboBox*>("octaveMode");auto* apply=w.findChild<QPushButton*>("primary");
-        mode->setCurrentIndex(1);QCOMPARE(w.currentResult()->octaveShift,-12);
-        QTest::mouseClick(apply,Qt::LeftButton);QCOMPARE(w.currentResult()->octaveShift,0);
-        for(const auto& note:w.currentResult()->notes)QCOMPARE(note.target,8);
+        mode->setCurrentIndex(1);QCOMPARE(w.currentResult()->transpose,-12);
+        QTest::mouseClick(apply,Qt::LeftButton);QCOMPARE(w.currentResult()->transpose,0);
+        QCOMPARE(w.currentResult()->exact,241);QVERIFY(w.currentResult()->octaveFolded>0);
+        QCOMPARE(w.currentResult()->notes[0].target,4);QVERIFY(info->text().contains("八度折叠"));
         mode->setCurrentIndex(0);w.findChild<QComboBox*>("strategyCombo")->setCurrentIndex(1);
         QTest::mouseClick(apply,Qt::LeftButton);QCOMPARE(w.currentResult()->exact,241);
-        QCOMPARE(w.currentResult()->skipped,0);QCOMPARE(w.currentResult()->octaveShift,-12);
+        QCOMPARE(w.currentResult()->skipped,0);QCOMPARE(w.currentResult()->transpose,-12);
         auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");roll->setZoom(30);
         QTest::qWait(50);
         auto screenshots=qEnvironmentVariable("ROCK_SCREENSHOTS");QDir().mkpath(screenshots);
@@ -602,7 +626,7 @@ private slots:
         auto* table=report->findChild<QTableWidget*>("conversionTable");QVERIFY(table);
         QCOMPARE(table->rowCount(),200);QCOMPARE(table->item(0,1)->text(),QString("A4"));
         QCOMPARE(table->item(0,2)->text(),QString("A3"));QCOMPARE(table->item(0,3)->text(),QString("J"));
-        QVERIFY(table->item(0,5)->text().contains("八度适配"));
+        QVERIFY(table->item(0,5)->text().contains("整体移调"));
         for(int row=1;row<table->rowCount();++row)
             QVERIFY(table->item(row,0)->text().toDouble()>=table->item(row-1,0)->text().toDouble());
         QTest::mouseClick(report->findChild<QPushButton*>("reportNextPage"),Qt::LeftButton);QCOMPARE(table->rowCount(),41);

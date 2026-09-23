@@ -1,0 +1,100 @@
+{
+  "sha": "39eecbbc46a52e0402f783b872ef62b0254a896a",
+  "node_id": "MDY6Q29tbWl0MzAwMTkzMDozOWVlY2JiYzQ2YTUyZTA0MDJmNzgzYjg3MmVmNjJiMDI1NGE4OTZh",
+  "commit": {
+    "author": {
+      "name": "Francisco Lopes",
+      "email": "francisco@nosubstance.me",
+      "date": "2021-08-09T03:39:04Z"
+    },
+    "committer": {
+      "name": "Francisco Lopes",
+      "email": "francisco@nosubstance.me",
+      "date": "2021-08-09T03:39:04Z"
+    },
+    "message": "Commercial license fixes",
+    "tree": {
+      "sha": "544ae9e64606c28d4d5ddd3c862be7afe4ff8e38",
+      "url": "https://api.github.com/repos/oblitum/Interception/git/trees/544ae9e64606c28d4d5ddd3c862be7afe4ff8e38"
+    },
+    "url": "https://api.github.com/repos/oblitum/Interception/git/commits/39eecbbc46a52e0402f783b872ef62b0254a896a",
+    "comment_count": 0,
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "signature": "-----BEGIN PGP SIGNATURE-----\n\niQJNBAABCgA3FiEEJuvTtmU2zk5lbAslLnVM8YhjRLUFAmEQo1gZHGZyYW5jaXNj\nb0Bub3N1YnN0YW5jZS5tZQAKCRAudUzxiGNEtbNwD/4s2+DpZTCrvVThSnsC0sDT\n728sDZgxYaeagdkHi1w6PXvzRy3Jf3n0WiCKFHJNGxIxjMf+LpUgKye6D8ijztpF\nRkyk6yxzgjYJXYW/b1B8ZAkahQEah8f1sVpuvFNhVOV9FFgBA9QCohHIC6E78qWa\nh3zZtOOCxEM39PbfowsBFdIDGcJRwkkDxdgHseAHyKnswKgGce4QYXcbc8ZE2xxS\ntJn+GldJUu6hnjUPvDcYBeNJGRJIDWRgaFepOFEiS9hYu6F2soMwRv9ub96Hd5iD\nrGSDeXLGWabFYTDdEcqsakqKbXGiMjBg4JxUsfY8VPDA9C3Mj7URmAHPpFVpt3Wd\ndwPToZdNDmhFjCwRcl8S1bMs9xvXphmcUaTXGH6tA4lucdFf26cDbWRALkB69M1d\nTpIhuANbrtwDhm8Rc2yNp5+InpV32XlsKzvEudAdyWksa2jagVJErXOYCo3aEjU4\nb+x37xT2igeQ9zgTZ5hmEQyI2KgTGk7bl1U32ECx4WJTk1Fo15HHqmMcKqk716Sw\n1VsWvV0/uZatXXvE+W44g/+kRXNxF0+1Jkn0RbH5HrtO5hrGDygkcOptYXpinlTo\nByPy4cnXKxze9gY7s4XmhVajURxzhG+sTUAYaykNNuI8QmvYOHt+iiKFkk4ceiX5\nI8tisCfg7uDwFvOL/H9y6g==\n=e5Fq\n-----END PGP SIGNATURE-----",
+      "payload": "tree 544ae9e64606c28d4d5ddd3c862be7afe4ff8e38\nparent 513556e660893ca294b2e287143abb40a9170bb3\nauthor Francisco Lopes <francisco@nosubstance.me> 1628480344 -0300\ncommitter Francisco Lopes <francisco@nosubstance.me> 1628480344 -0300\n\nCommercial license fixes\n",
+      "verified_at": "2024-11-05T16:42:55Z"
+    }
+  },
+  "url": "https://api.github.com/repos/oblitum/Interception/commits/39eecbbc46a52e0402f783b872ef62b0254a896a",
+  "html_url": "https://github.com/oblitum/Interception/commit/39eecbbc46a52e0402f783b872ef62b0254a896a",
+  "comments_url": "https://api.github.com/repos/oblitum/Interception/commits/39eecbbc46a52e0402f783b872ef62b0254a896a/comments",
+  "author": {
+    "login": "oblitum",
+    "id": 1269815,
+    "node_id": "MDQ6VXNlcjEyNjk4MTU=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/1269815?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/oblitum",
+    "html_url": "https://github.com/oblitum",
+    "followers_url": "https://api.github.com/users/oblitum/followers",
+    "following_url": "https://api.github.com/users/oblitum/following{/other_user}",
+    "gists_url": "https://api.github.com/users/oblitum/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/oblitum/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/oblitum/subscriptions",
+    "organizations_url": "https://api.github.com/users/oblitum/orgs",
+    "repos_url": "https://api.github.com/users/oblitum/repos",
+    "events_url": "https://api.github.com/users/oblitum/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/oblitum/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "committer": {
+    "login": "oblitum",
+    "id": 1269815,
+    "node_id": "MDQ6VXNlcjEyNjk4MTU=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/1269815?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/oblitum",
+    "html_url": "https://github.com/oblitum",
+    "followers_url": "https://api.github.com/users/oblitum/followers",
+    "following_url": "https://api.github.com/users/oblitum/following{/other_user}",
+    "gists_url": "https://api.github.com/users/oblitum/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/oblitum/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/oblitum/subscriptions",
+    "organizations_url": "https://api.github.com/users/oblitum/orgs",
+    "repos_url": "https://api.github.com/users/oblitum/repos",
+    "events_url": "https://api.github.com/users/oblitum/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/oblitum/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "parents": [
+    {
+      "sha": "513556e660893ca294b2e287143abb40a9170bb3",
+      "url": "https://api.github.com/repos/oblitum/Interception/commits/513556e660893ca294b2e287143abb40a9170bb3",
+      "html_url": "https://github.com/oblitum/Interception/commit/513556e660893ca294b2e287143abb40a9170bb3"
+    }
+  ],
+  "stats": {
+    "total": 0,
+    "additions": 0,
+    "deletions": 0
+  },
+  "files": [
+    {
+      "sha": "6d817145e0232ed6fc40814a217cb4f282c02341",
+      "filename": "licenses/commercial-usage/Interception.pdf",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 0,
+      "changes": 0,
+      "blob_url": "https://github.com/oblitum/Interception/blob/39eecbbc46a52e0402f783b872ef62b0254a896a/licenses%2Fcommercial-usage%2FInterception.pdf",
+      "raw_url": "https://github.com/oblitum/Interception/raw/39eecbbc46a52e0402f783b872ef62b0254a896a/licenses%2Fcommercial-usage%2FInterception.pdf",
+      "contents_url": "https://api.github.com/repos/oblitum/Interception/contents/licenses%2Fcommercial-usage%2FInterception.pdf?ref=39eecbbc46a52e0402f783b872ef62b0254a896a"
+    }
+  ]
+}

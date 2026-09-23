@@ -12,6 +12,7 @@ class QLabel; class QComboBox; class QDoubleSpinBox; class QSpinBox; class QPush
 namespace rock {
 class PianoRoll;
 class PerformancePage : public QWidget {
+    Q_OBJECT
 public:
     explicit PerformancePage(QWidget* parent=nullptr,OutputDiscovery discovery={},AudioBackend backend=AudioBackend::System);
     ~PerformancePage() override;
@@ -21,6 +22,9 @@ public:
                  const QString& path,const Settings& settings);
     void setPreviewPosition(double seconds);
     double previewPosition() const{return position_;}
+signals:
+    // Shared position expressed in the workbench's tempo, including fractional ticks.
+    void sourcePositionChanged(double seconds);
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;

@@ -25,7 +25,7 @@ struct Song {
     double secondsAt(int tick) const;
 };
 struct Settings {
-    bool nearest{true}, fixedTempo{false}, autoOctave{true};
+    bool nearest{true}, fixedTempo{false}, autoTranspose{true};
     double bpm{120}, speed{1};
     int holdMs{30}, gapMs{20};
     std::vector<bool> enabled, solo;
@@ -48,8 +48,9 @@ struct MappedNote {
 };
 struct Conversion {
     std::vector<MappedNote> notes;
-    int octaveShift{}; // One shared semitone offset, always a multiple of 12.
-    int exact{}, approximate{}, skipped{}, excluded{}, merged{}, conflicts{}, chords{};
+    int transpose{}; // Shared chromatic transposition in [-12, 12], before octave folding.
+    int octaveFolded{}; // Subset of exact: same pitch class, moved to another octave.
+    int exact{}, approximate{}, skipped{}, excluded{}, merged{}, conflicts{}, chords{}; // exact includes same-name octave folds.
     int edited{}, deleted{};
     double duration{};
 };
