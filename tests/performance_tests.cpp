@@ -5,6 +5,11 @@
 #include <QApplication>
 #include <QWidget>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QProcess>
+#include <QScopeGuard>
+#include <QTextStream>
+#include <QVBoxLayout>
 #include <set>
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -12,10 +17,10 @@
 using namespace rock;
 class FakeOutput:public KeyOutput {
 public:
-    TargetStatus target{TargetStatus::Ready};bool modifiers{},failDown{},opened{},activated{};
+    TargetStatus target{TargetStatus::Ready};bool modifiers{},failDown{},opened{},activated{},activationSucceeds{true};
     std::vector<KeyBatch> events;
     bool prepare(const OutputTarget&,QString&) override {opened=true;return true;}
-    bool activate() override {activated=true;return true;}
+    bool activate() override {activated=true;return activationSucceeds;}
     TargetStatus targetStatus() override{return target;}
     bool modifiersHeld() override{return modifiers;}
     bool send(KeyBatch b) override{events.push_back(b);return !(failDown&&b.down);}
@@ -24,6 +29,30 @@ public:
 class PerformanceTests:public QObject {
     Q_OBJECT
 private slots:
+    void configurableCountdown(){
+        for(int seconds:{1,3,5,60,3600})for(bool activate:{false,true}){
+            auto output=std::make_unique<FakeOutput>();auto* o=output.get();PerformanceEngine e(std::move(output));
+            QVERIFY(e.start({{{0,1}},1,0,.03,.02,seconds},{},activate,10));
+            QCOMPARE(e.snapshot().countdown,double(seconds));QCOMPARE(o->activated,activate);
+            e.tick(10+seconds-.001);QVERIFY(o->events.empty());
+            e.tick(10+seconds);QCOMPARE(o->events.size(),size_t(1));QCOMPARE(o->events.back().down,uint16_t(1));
+        }
+        for(int seconds:{0,-1}){
+            auto output=std::make_unique<FakeOutput>();auto* o=output.get();PerformanceEngine e(std::move(output));
+            QVERIFY(!e.start({{{0,1}},1,0,.03,.02,seconds},{},true,0));
+            QVERIFY(!o->opened);QVERIFY(!o->activated);QVERIFY(o->events.empty());
+        }
+    }
+    void customCountdownPauseAndActivationFailure(){
+        auto output=std::make_unique<FakeOutput>();auto* o=output.get();PerformanceEngine e(std::move(output));
+        o->activationSucceeds=false;o->target=TargetStatus::NotForeground;
+        QVERIFY(e.start({{{0,1}},1,0,.03,.02,3},{},true,0));
+        QVERIFY(e.snapshot().message.contains("前台焦点"));
+        e.togglePause(1);e.tick(50);QVERIFY(o->events.empty());
+        e.togglePause(50);QCOMPARE(e.snapshot().state,PerformanceState::Paused);
+        o->target=TargetStatus::Ready;e.togglePause(100);
+        e.tick(101.999);QVERIFY(o->events.empty());e.tick(102);QCOMPARE(o->events.size(),size_t(1));
+    }
     void countdownAndActivation(){
         for(bool activate:{false,true}){
             auto output=std::make_unique<FakeOutput>();auto* o=output.get();PerformanceEngine engine(std::move(output));
@@ -135,6 +164,38 @@ private slots:
         QVERIFY_EXCEPTION_THROWN(makePerformancePlan(r,0,30,20),std::invalid_argument);
         r.notes.back().start=1.06;QCOMPARE(makePerformancePlan(r,0,30,20).strikes.size(),size_t(3));
     }
+    void nativeWindowActivation(){
+        if(!qEnvironmentVariableIsSet("ROCK_NATIVE_ACTIVATION_TEST"))QSKIP("Opt-in desktop test activates only its own helper window; no keys are sent.");
+#ifdef Q_OS_WIN
+        QProcess receiver;
+        auto cleanup=qScopeGuard([&]{if(receiver.state()!=QProcess::NotRunning){receiver.terminate();if(!receiver.waitForFinished(2000)){receiver.kill();receiver.waitForFinished(2000);}}});
+        receiver.start(QCoreApplication::applicationFilePath(),{"-platform","windows","--activation-receiver"});
+        QVERIFY(receiver.waitForStarted());
+        QTRY_VERIFY_WITH_TIMEOUT(receiver.canReadLine(),5000);
+        const auto identity=receiver.readLine().trimmed();
+        bool ok=false;const auto id=identity.toULongLong(&ok);QVERIFY2(ok,identity.constData());
+        const auto target=reinterpret_cast<HWND>(quintptr(id));const auto pid=quint32(receiver.processId());
+        QWidget source;source.setWindowTitle("自动演奏 · 焦点切换测试");source.resize(320,100);source.show();
+        for(WPARAM command:{WPARAM(SC_RESTORE),WPARAM(SC_MAXIMIZE),WPARAM(SC_MINIMIZE)}){
+            DWORD_PTR result=0;
+            QVERIFY(SendMessageTimeoutW(target,WM_SYSCOMMAND,command,0,SMTO_ABORTIFHUNG|SMTO_BLOCK,1000,&result));
+            // The helper grants the test process permission to take the foreground
+            // back between cases; activation of the target itself uses production code.
+            QVERIFY(SendMessageTimeoutW(target,WM_APP+42,GetCurrentProcessId(),0,SMTO_ABORTIFHUNG|SMTO_BLOCK,1000,&result));
+            QCoreApplication::processEvents();source.raise();source.activateWindow();SetForegroundWindow(reinterpret_cast<HWND>(source.winId()));
+            QTRY_COMPARE(GetForegroundWindow(),reinterpret_cast<HWND>(source.winId()));
+            QVERIFY(activateOutputWindow(id,pid));QCOMPARE(GetForegroundWindow(),target);QVERIFY(!IsIconic(target));
+            if(command==SC_MAXIMIZE)QVERIFY(IsZoomed(target));
+            GUITHREADINFO info{};info.cbSize=sizeof(info);
+            QVERIFY(GetGUIThreadInfo(GetWindowThreadProcessId(target,nullptr),&info));
+            QVERIFY(info.hwndFocus==target||IsChild(target,info.hwndFocus));
+            QTest::qWait(100);QCOMPARE(GetForegroundWindow(),target);
+        }
+        QVERIFY(!activateOutputWindow(id,GetCurrentProcessId()));
+        QVERIFY(PostMessageW(target,WM_CLOSE,0,0));QVERIFY(receiver.waitForFinished(3000));
+        QVERIFY(!activateOutputWindow(id,pid));
+#endif
+    }
     void nativeControlledReceiver(){
         if(!qEnvironmentVariableIsSet("ROCK_NATIVE_OUTPUT_TEST"))QSKIP("Opt-in desktop test sends keys only to its own foreground receiver.");
 #ifdef Q_OS_WIN
@@ -158,5 +219,24 @@ private slots:
 #endif
     }
 };
-QTEST_MAIN(PerformanceTests)
+int main(int argc,char** argv){
+    QApplication app(argc,argv);
+    if(app.arguments().contains("--activation-receiver")){
+        struct Receiver:QWidget {
+#ifdef Q_OS_WIN
+            bool nativeEvent(const QByteArray& type,void* message,qintptr* result) override {
+                const auto* msg=static_cast<MSG*>(message);
+                if(msg->message==WM_APP+42){AllowSetForegroundWindow(DWORD(msg->wParam));if(result)*result=1;return true;}
+                return QWidget::nativeEvent(type,message,result);
+            }
+#endif
+        } window;
+        window.setWindowTitle("自动演奏 · 隔离焦点接收窗口");window.resize(360,120);
+        auto* layout=new QVBoxLayout(&window);auto* input=new QLineEdit;layout->addWidget(input);
+        window.show();input->setFocus();
+        QTextStream stream(stdout);stream<<qulonglong(window.winId())<<Qt::endl;
+        return app.exec();
+    }
+    PerformanceTests tests;return QTest::qExec(&tests,argc,argv);
+}
 #include "performance_tests.moc"

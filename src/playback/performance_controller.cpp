@@ -10,7 +10,8 @@
 namespace rock {
 namespace {double now(){return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();}
 constexpr int pauseId=0x5241,stopId=0x5242;}
-PerformanceController::PerformanceController():engine_(createKeyOutput()) {QCoreApplication::instance()->installNativeEventFilter(this);}
+PerformanceController::PerformanceController():PerformanceController(createKeyOutput()) {}
+PerformanceController::PerformanceController(std::unique_ptr<KeyOutput> output):engine_(std::move(output)) {QCoreApplication::instance()->installNativeEventFilter(this);}
 PerformanceController::~PerformanceController(){stop();QCoreApplication::instance()->removeNativeEventFilter(this);}
 void PerformanceController::unregisterHotkeys(){
 #ifdef Q_OS_WIN

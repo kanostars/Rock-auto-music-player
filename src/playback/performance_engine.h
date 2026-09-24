@@ -19,7 +19,7 @@ public:
     virtual void close(){}
 };
 struct Strike {double time{};uint16_t keys{};};
-struct PerformancePlan {std::vector<Strike> strikes;double duration{},start{},hold{},gap{};};
+struct PerformancePlan {std::vector<Strike> strikes;double duration{},start{},hold{},gap{};int countdownSeconds{5};};
 Conversion retimePerformance(const Song&,const Conversion&,const Settings&);
 PerformancePlan makePerformancePlan(const Conversion&,double start,int holdMs,int gapMs);
 enum class PerformanceState {Idle,Countdown,Playing,Paused,Finished,Stopped,Failed};

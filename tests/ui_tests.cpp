@@ -1,6 +1,6 @@
 #include "ui/main_window.h"
 #include "ui/piano_roll.h"
-#include "ui/performance_page.h"
+#include "ui/performance_panel.h"
 #include "ui/handpan_test.h"
 #include <QComboBox>
 #include <QCheckBox>
@@ -14,7 +14,7 @@
 #include <QScrollBar>
 #include <QSlider>
 #include <QSpinBox>
-#include <QStackedWidget>
+#include <QTabWidget>
 #include <QSignalSpy>
 #include <QMouseEvent>
 #include <QTemporaryDir>
@@ -25,6 +25,18 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include <MidiFile.h>
 #include <sstream>
+#include <atomic>
+#include <set>
+
+class PlaylistTestOutput:public rock::KeyOutput {
+public:
+    int prepared{};std::atomic_int downs{},ups{};
+    bool prepare(const rock::OutputTarget&,QString&) override {++prepared;return true;}
+    bool activate() override{return true;}
+    rock::TargetStatus targetStatus() override{return rock::TargetStatus::Ready;}
+    bool modifiersHeld() override{return false;}
+    bool send(rock::KeyBatch batch) override{if(batch.down)++downs;if(batch.up)++ups;return true;}
+};
 
 class UiTests : public QObject {
     Q_OBJECT
@@ -36,58 +48,134 @@ class UiTests : public QObject {
         QTest::mouseRelease(widget,Qt::LeftButton,modifiers,to);
     }
 private slots:
+    void unifiedWorkbenchTimelineAndOutputLock(){
+        auto output=std::make_unique<PlaylistTestOutput>();auto* fake=output.get();
+        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest,std::move(output));w.show();
+        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/nine-keys.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        auto* panel=w.findChild<rock::PerformancePanel*>();auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");
+        auto* tabs=w.findChild<QTabWidget*>("workbenchTabs");auto* clock=w.findChild<QLabel*>("previewClock");
+        QCOMPARE(w.findChildren<rock::PianoRoll*>().size(),1);QCOMPARE(w.findChildren<QListWidget*>().size(),1);
+        QVERIFY(!w.findChild<QWidget*>("mainPages"));QVERIFY(!w.findChild<QComboBox*>("performanceTempoMode"));
+        QVERIFY(!w.findChild<QPushButton*>("goPerformanceButton"));QCOMPARE(tabs->count(),3);
+        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,1.375)));
+        QCOMPARE(panel->previewPosition(),1.375);QVERIFY(clock->text().startsWith("00:01.37"));
+        panel->setPreviewPosition(2.125);QVERIFY(clock->text().startsWith("00:02.12"));
+        w.findChild<QPushButton*>("playButton")->click();QTest::qWait(40);
+        QVERIFY(panel->previewPosition()>2.125);w.findChild<QPushButton*>("playButton")->click();QVERIFY(roll->editingEnabled());
+        auto* keys=w.findChild<QComboBox*>("performanceKeyboard");auto* windows=w.findChild<QComboBox*>("performanceWindow");
+        keys->addItem("fake",QString("fake"));windows->addItem("fake",quint64(1));windows->setItemData(0,1,Qt::UserRole+1);
+        w.findChild<QSpinBox*>("performanceCountdown")->setValue(1);
+        w.findChild<QComboBox*>("tempoMode")->setCurrentIndex(1);w.findChild<QDoubleSpinBox*>("bpmSpin")->setValue(60);
+        auto* start=w.findChild<QPushButton*>("startPerformanceButton");start->click();
+        QCOMPARE(fake->prepared,1);QVERIFY(panel->active());QVERIFY(!roll->editingEnabled());
+        QVERIFY(w.findChild<QLabel*>("settingsState")->text().contains("已应用"));
+        QVERIFY(w.currentResult()->duration>0);QCOMPARE(panel->previewPosition(),0.0);
+        const auto count=w.currentResult()->deleted;roll->selectSource(0);QTest::keyClick(roll->viewport(),Qt::Key_Delete);QCOMPARE(w.currentResult()->deleted,count);
+        const double before=panel->previewPosition();QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,3.0)));QCOMPARE(panel->previewPosition(),before);
+        tabs->setCurrentIndex(2);tabs->setCurrentIndex(1);QVERIFY(panel->active());
+        start->click();QCOMPARE(start->text(),QString("继续演奏"));QVERIFY(!roll->editingEnabled());
+        w.findChild<QPushButton*>("stopButton")->click();QVERIFY(!panel->active());QVERIFY(roll->editingEnabled());QCOMPARE(panel->previewPosition(),0.0);
+        start->click();QVERIFY(panel->active());
+        w.findChild<QPushButton*>("playButton")->click();QVERIFY(!panel->active());QVERIFY(w.findChild<QPushButton*>("playButton")->text().contains("暂停"));
+        start->click();QVERIFY(panel->active());QCOMPARE(w.findChild<QPushButton*>("playButton")->text(),QString("手碟试听"));
+        w.findChild<QPushButton*>("stopButton")->click();tabs->setCurrentIndex(2);
+        w.resize(1460,900);QTest::qWait(30);QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/unified-output-settings.png"));
+        w.resize(1120,740);QTest::qWait(30);QCOMPARE(w.size(),QSize(1120,740));
+        QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/unified-output-compact.png"));
+        w.close();QCOMPARE(fake->downs.load(),fake->ups.load());
+    }
+    void sharedLibraryEditingAndNavigation(){
+        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();
+        const auto samples=qEnvironmentVariable("ROCK_SAMPLES");
+        w.importFiles({samples+"/nine-keys.mid",samples+"/studio-demo.mid",samples+"/nine-keys.mid"});
+        QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        auto* source=w.findChild<QListWidget*>("songList");
+        auto* page=w.findChild<rock::PerformancePanel*>();
+        QCOMPARE(source->count(),3);
+        auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");roll->selectSource(0);
+        QTest::keyClick(roll->viewport(),Qt::Key_Delete);QCOMPARE(w.currentResult()->deleted,1);
+        const auto* selected=w.currentResult();page->setPreviewPosition(.2);
+        w.findChild<QPushButton*>("movePerformanceSongUp")->click();
+        QCOMPARE(source->currentRow(),1);QCOMPARE(w.currentResult(),selected);QCOMPARE(page->previewPosition(),.2);
+        QCOMPARE(source->item(2)->toolTip(),samples+"/studio-demo.mid");
+        w.findChild<QPushButton*>("movePerformanceSongDown")->click();
+        QCOMPARE(source->currentRow(),2);QCOMPARE(w.currentResult(),selected);
+        w.findChild<QPushButton*>("undoButton")->click();QCOMPARE(w.currentResult()->deleted,0);
+        w.findChild<QPushButton*>("nextPerformanceSong")->click();QCOMPARE(source->currentRow(),0);QCOMPARE(page->previewPosition(),0.0);
+        w.findChild<QPushButton*>("previousPerformanceSong")->click();QCOMPARE(source->currentRow(),2);
+        source->setCurrentRow(1);QCOMPARE(source->currentRow(),1);
+        source->setCurrentRow(0);QCOMPARE(source->currentRow(),0);
+        w.findChild<QPushButton*>("removePerformanceSong")->click();QCOMPARE(source->count(),2);QVERIFY(w.currentResult());
+        w.findChild<QPushButton*>("removePerformanceSong")->click();w.findChild<QPushButton*>("removePerformanceSong")->click();
+        QCOMPARE(source->count(),0);QVERIFY(!w.currentResult());QCOMPARE(page->previewPosition(),0.0);
+        QVERIFY(!w.findChild<QPushButton*>("nextPerformanceSong")->isEnabled());QVERIFY(!w.findChild<QPushButton*>("removePerformanceSong")->isEnabled());
+        QVERIFY(QFileInfo::exists(samples+"/nine-keys.mid"));
+        w.importFiles({samples+"/nine-keys.mid",samples+"/studio-demo.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
+        QCOMPARE(source->count(),2);QVERIFY(w.currentResult());QVERIFY(w.findChild<QPushButton*>("nextPerformanceSong")->isEnabled());
+        QVERIFY(!w.findChild<QLabel*>("performanceState")->text().contains("曲目栏为空"));
+        w.resize(1120,740);QTest::qWait(50);QCOMPARE(w.size(),QSize(1120,740));
+        QVERIFY(w.findChild<rock::PianoRoll*>("pianoRoll")->width()>430);
+        QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/unified-workbench-compact.png"));
+        w.resize(1460,900);QTest::qWait(30);QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/unified-workbench.png"));
+    }
+    void continuousPlaylist_data(){
+        QTest::addColumn<int>("mode");QTest::addColumn<int>("count");QTest::addColumn<bool>("conflict");
+        QTest::newRow("sequential-wrap")<<0<<3<<false;
+        QTest::newRow("single-repeat")<<1<<3<<false;
+        QTest::newRow("random-no-adjacent-repeat")<<2<<3<<false;
+        QTest::newRow("one-song-random")<<2<<1<<false;
+        QTest::newRow("conflict-stops-queue")<<0<<2<<true;
+    }
+    void continuousPlaylist(){
+        QFETCH(int,mode);QFETCH(int,count);QFETCH(bool,conflict);
+        QListWidget source;for(int row=0;row<count;++row)source.addItem(QString::number(row));source.setCurrentRow(0);
+        rock::OutputDiscovery discovery;
+        discovery.keyboards=[]{return rock::DiscoveryResult{{{"test",QString("test"),""}}, {}};};
+        discovery.windows=[]{return rock::DiscoveryResult{{{"test",quint64(1),"",1}}, {}};};
+        auto output=std::make_unique<PlaylistTestOutput>();auto* fake=output.get();
+        rock::PerformancePanel page(nullptr,discovery,rock::AudioBackend::NullTest,std::move(output));page.setLibrary(&source);connect(&page,&rock::PerformancePanel::startRequested,&page,&rock::PerformancePanel::startPerformance);page.show();
+        std::vector<std::shared_ptr<rock::Song>> songs;std::vector<std::shared_ptr<rock::Conversion>> results;
+        for(int row=0;row<count;++row){
+            auto song=std::make_shared<rock::Song>();song->ppq=100;song->endTick=10;song->tempos={{0,500000,0}};
+            auto result=std::make_shared<rock::Conversion>();result->duration=.05;result->exact=1;result->notes={{0,row,rock::Mapping::Exact,0,.05,false,0,10}};
+            if(conflict&&row==1){result->notes.push_back({1,row,rock::Mapping::Exact,.01,.03,false,2,8});++result->exact;}
+            songs.push_back(song);results.push_back(result);
+        }
+        auto load=[&](int row){page.setSong(songs[row],results[row],QString::number(row)+".mid",{});};
+        connect(&source,&QListWidget::currentRowChanged,&page,load);
+        connect(&page,&rock::PerformancePanel::songChangeRequested,&source,[&](int row){source.setCurrentRow(row);});
+        load(0);for(int i=0;i<mode;++i)page.findChild<QPushButton*>("performancePlayMode")->click();
+        page.findChild<QSpinBox*>("performanceCountdown")->setValue(1);
+        page.findChild<QPushButton*>("refreshKeyboardsButton")->click();page.findChild<QPushButton*>("refreshWindowsButton")->click();
+        auto* keyboards=page.findChild<QComboBox*>("performanceKeyboard");auto* windows=page.findChild<QComboBox*>("performanceWindow");
+        QTRY_COMPARE(keyboards->count(),1);QTRY_COMPARE(windows->count(),1);keyboards->setCurrentIndex(0);windows->setCurrentIndex(0);
+        QSignalSpy changes(&page,&rock::PerformancePanel::songChangeRequested);
+        page.findChild<QPushButton*>("startPerformanceButton")->click();QVERIFY(!page.findChild<QPushButton*>("performancePlayMode")->isEnabled());
+        if(conflict){
+            QTRY_VERIFY_WITH_TIMEOUT(page.findChild<QLabel*>("performanceState")->text().contains("同键过密"),3500);
+            QCOMPARE(fake->prepared,1);QCOMPARE(source.currentRow(),1);
+        }else{
+            QTRY_VERIFY_WITH_TIMEOUT(fake->prepared>=4,6000);
+            QCOMPARE(changes.count(),3);
+            std::vector<int> rows{0};for(const auto& change:changes)rows.push_back(change[0].toInt());
+            if(mode==0)QCOMPARE(rows,(std::vector<int>{0,1,2,0}));
+            else if(mode==1||count==1)QCOMPARE(rows,(std::vector<int>{0,0,0,0}));
+            else{QCOMPARE(std::set<int>(rows.begin(),rows.begin()+3).size(),size_t(3));QVERIFY(rows[2]!=rows[3]);}
+        }
+        page.stopPerformance();const int prepared=fake->prepared;const int events=fake->downs.load();
+        QTest::qWait(1100);QCOMPARE(fake->prepared,prepared);QCOMPARE(fake->downs.load(),events);QCOMPARE(fake->downs.load(),fake->ups.load());
+        QVERIFY(page.findChild<QSpinBox*>("performanceCountdown")->isEnabled());
+        if(mode==0&&!conflict){
+            auto* start=page.findChild<QPushButton*>("startPerformanceButton");start->click();QCOMPARE(fake->prepared,prepared+1);
+            page.findChild<QPushButton*>("nextPerformanceSong")->click();QCOMPARE(fake->prepared,prepared+2);
+            page.findChild<QPushButton*>("previousPerformanceSong")->click();QCOMPARE(fake->prepared,prepared+3);
+            start->click();QCOMPARE(start->text(),QString("继续演奏"));
+            page.findChild<QPushButton*>("nextPerformanceSong")->click();QCOMPARE(start->text(),QString("开始演奏"));
+            QTest::qWait(1100);QCOMPARE(fake->prepared,prepared+3);QCOMPARE(fake->downs.load(),events);
+        }
+    }
     void initTestCase() {
         QVERIFY(QDir().mkpath(qEnvironmentVariable("ROCK_SCREENSHOTS")));
-    }
-    void goPerformInheritsPreviewPosition() {
-        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(30);
-        auto* go=w.findChild<QPushButton*>("goPerformanceButton");auto* pages=w.findChild<QStackedWidget*>("mainPages");
-        auto* page=static_cast<rock::PerformancePage*>(pages->widget(1));
-        auto* editorTab=w.findChild<QPushButton*>("editorPageButton");auto* outputTab=w.findChild<QPushButton*>("performancePageButton");
-        QVERIFY(go);QTest::mouseClick(go,Qt::LeftButton);QCOMPARE(pages->currentIndex(),1);QCOMPARE(page->previewPosition(),0.0);QVERIFY(outputTab->isChecked());
-        QTest::mouseClick(editorTab,Qt::LeftButton);
-        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/studio-demo.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
-        auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");auto* preview=w.findChild<rock::PianoRoll*>("performanceRoll");
-        auto* editorClock=w.findChild<QLabel*>("previewClock");auto* outputClock=w.findChild<QLabel*>("performanceClock");
-        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,20.375)));
-        QTest::mouseClick(outputTab,Qt::LeftButton);preview->setZoom(200);QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(go,Qt::LeftButton);
-        QCOMPARE(page->previewPosition(),20.375);QCOMPARE(outputClock->text(),editorClock->text());QVERIFY(outputTab->isChecked());QVERIFY(!editorTab->isChecked());
-        QVERIFY(preview->horizontalScrollBar()->value()>0);QVERIFY(!preview->editingEnabled());
-        page->setPreviewPosition(7.25);QTest::mouseClick(outputTab,Qt::LeftButton);QCOMPARE(page->previewPosition(),7.25); // Current tab does not reset a local seek.
-        QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(outputTab,Qt::LeftButton);
-        QCOMPARE(page->previewPosition(),7.25);QCOMPARE(outputClock->text(),editorClock->text());
-        QTest::mouseClick(editorTab,Qt::LeftButton);auto* play=w.findChild<QPushButton*>("playButton");
-        QTest::mouseClick(play,Qt::LeftButton);QTest::qWait(80);QTest::mouseClick(go,Qt::LeftButton);
-        QVERIFY(page->previewPosition()>7.25);QCOMPARE(outputClock->text(),editorClock->text());QVERIFY(play->text().contains("手碟试听"));
-        auto stoppedAt=page->previewPosition();QTest::qWait(35);QCOMPARE(page->previewPosition(),stoppedAt);
-        QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(w.findChild<QPushButton*>("expandTrackButton"),Qt::LeftButton);
-        auto* detached=w.findChild<QWidget*>("trackWindow");QVERIFY(detached->isVisible());
-        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,5.125)));
-        QTest::mouseClick(go,Qt::LeftButton);QVERIFY(!detached->isVisible());QCOMPARE(pages->currentIndex(),1);QCOMPARE(page->previewPosition(),5.125);
-        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/empty.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);QCOMPARE(page->previewPosition(),0.0);
-    }
-    void sharedPositionBothDirectionsAndTempoChanges() {
-        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();
-        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/nine-keys.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
-        auto* page=w.findChild<rock::PerformancePage*>("performancePage");
-        auto* roll=w.findChild<rock::PianoRoll*>("pianoRoll");auto* preview=w.findChild<rock::PianoRoll*>("performanceRoll");
-        auto* editor=w.findChild<QPushButton*>("editorPageButton");auto* output=w.findChild<QPushButton*>("performancePageButton");
-        auto* clock=w.findChild<QLabel*>("previewClock");auto* outputClock=w.findChild<QLabel*>("performanceClock");
-        QVERIFY(QMetaObject::invokeMethod(roll,"seekRequested",Qt::DirectConnection,Q_ARG(double,1.375)));
-        QCOMPARE(page->previewPosition(),1.375);QCOMPARE(clock->text(),outputClock->text());
-        output->click();QVERIFY(QMetaObject::invokeMethod(preview,"seekRequested",Qt::DirectConnection,Q_ARG(double,2.125)));
-        QCOMPARE(clock->text(),outputClock->text());editor->click();QVERIFY(clock->text().startsWith("00:02.12"));
-        auto* mode=page->findChild<QComboBox*>("performanceTempoMode");auto* bpm=page->findChild<QDoubleSpinBox*>("performanceBpm");
-        output->click();mode->setCurrentIndex(1);bpm->setValue(60);
-        QCOMPARE(page->previewPosition(),4.25);QVERIFY(clock->text().startsWith("00:02.12"));
-        page->setPreviewPosition(3.75);QVERIFY(clock->text().startsWith("00:01.87"));
-        for(int i=0;i<8;++i){editor->click();output->click();QCOMPARE(page->previewPosition(),3.75);}
-        // A reset in the workbench also resets the hidden output preview.
-        editor->click();w.findChild<QPushButton*>("stopButton")->click();QCOMPARE(page->previewPosition(),0.0);
-        QVERIFY(clock->text().startsWith("00:00.00"));output->click();QCOMPARE(page->previewPosition(),0.0);
-        // Loading another song cannot carry the previous song's playhead back into the workbench.
-        page->setPreviewPosition(3);w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/studio-demo.mid"});
-        QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);QCOMPARE(page->previewPosition(),0.0);QVERIFY(clock->text().startsWith("00:00.00"));
     }
     void handpanTestKeysMouseAndFocus() {
         rock::HandpanTestDialog dialog(nullptr,rock::AudioBackend::NullTest);dialog.show();dialog.activateWindow();
@@ -134,7 +222,7 @@ private slots:
             if(call==3)return rock::DiscoveryResult{};
             return rock::DiscoveryResult{{{"目标 · PID 10",QVariant::fromValue(quint64(0x123456789)),"window",10}}, {}};
         };
-        rock::PerformancePage page(nullptr,discovery,rock::AudioBackend::NullTest);page.resize(1100,720);page.show();QTest::qWait(40);
+        rock::PerformancePanel page(nullptr,discovery,rock::AudioBackend::NullTest);page.resize(1100,720);page.show();QTest::qWait(40);
         auto* keyboards=page.findChild<QComboBox*>("performanceKeyboard");auto* windows=page.findChild<QComboBox*>("performanceWindow");
         auto* refreshKeys=page.findChild<QPushButton*>("refreshKeyboardsButton");auto* refreshWindows=page.findChild<QPushButton*>("refreshWindowsButton");
         auto* keyStatus=page.findChild<QLabel*>("keyboardDiscoveryStatus");auto* windowStatus=page.findChild<QLabel*>("windowDiscoveryStatus");
@@ -168,7 +256,7 @@ private slots:
         testWindow->close();QTRY_VERIFY(testWindow.isNull());QTest::mouseClick(testKeys,Qt::LeftButton);
         QVERIFY(page.findChild<QDialog*>("keyTestWindow")->isVisible());
         // Destroying a page while scanning must not leave a worker accessing deleted widgets.
-        auto* transient=new rock::PerformancePage(nullptr,discovery);
+        auto* transient=new rock::PerformancePanel(nullptr,discovery);
         transient->findChild<QPushButton*>("refreshKeyboardsButton")->click();delete transient;QTest::qWait(60);
     }
     void nativeOutputDiscoverySmoke() {
@@ -185,58 +273,24 @@ private slots:
         rock::OutputDiscovery discovery;
         discovery.keyboards=[]{return rock::DiscoveryResult{{{"测试键盘",QString("test"),""}}, {}};};
         discovery.windows=[]{return rock::DiscoveryResult{{{"测试窗口",quint64(1),"",1}}, {}};};
-        rock::PerformancePage page(nullptr,discovery,rock::AudioBackend::NullTest);
+        rock::PerformancePanel page(nullptr,discovery,rock::AudioBackend::NullTest);
         auto song=std::make_shared<rock::Song>();song->ppq=100;song->endTick=200;song->tempos={{0,500000,0}};
         auto result=std::make_shared<rock::Conversion>();result->duration=1;result->exact=1;result->notes={{0,0,rock::Mapping::Exact,0,.1,false,0,20}};
         page.setSong(song,result,"test.mid",{});page.setPreviewPosition(.375);
-        auto* mode=page.findChild<QComboBox*>("performanceTempoMode");auto* bpm=page.findChild<QDoubleSpinBox*>("performanceBpm");
-        mode->setCurrentIndex(1);bpm->setValue(60);QCOMPARE(page.previewPosition(),.75);
-        page.inheritPreviewPosition(.125);QCOMPARE(page.previewPosition(),.25);
-        page.setSong(song,result,"test.mid",{});QCOMPARE(page.previewPosition(),.25);
+        QCOMPARE(page.previewPosition(),.375);
+        page.setSong(song,result,"test.mid",{});QCOMPARE(page.previewPosition(),.375);
+        connect(&page,&rock::PerformancePanel::startRequested,&page,&rock::PerformancePanel::startPerformance);
         QVERIFY(!page.findChild<QCheckBox*>("activatePerformanceWindow")->isChecked());
-        QCOMPARE(page.findChild<QSpinBox*>("performanceCountdown")->value(),5);
+        auto* countdown=page.findChild<QSpinBox*>("performanceCountdown");
+        QCOMPARE(countdown->value(),5);QVERIFY(countdown->isEnabled());QCOMPARE(countdown->minimum(),1);
+        countdown->setValue(0);QCOMPARE(countdown->value(),1);
+        countdown->setValue(12);page.setSong(song,result,"test.mid",{});QCOMPARE(countdown->value(),12);
         auto* start=page.findChild<QPushButton*>("startPerformanceButton");QVERIFY(!start->isEnabled());
         page.findChild<QPushButton*>("refreshKeyboardsButton")->click();page.findChild<QPushButton*>("refreshWindowsButton")->click();
         auto* keyboards=page.findChild<QComboBox*>("performanceKeyboard");auto* windows=page.findChild<QComboBox*>("performanceWindow");
         QTRY_COMPARE(keyboards->count(),1);QTRY_COMPARE(windows->count(),1);QVERIFY(!start->isEnabled());
         keyboards->setCurrentIndex(0);QVERIFY(!start->isEnabled());windows->setCurrentIndex(0);QVERIFY(start->isEnabled());
         start->click();QVERIFY(page.findChild<QLabel*>("performanceState")->text().contains("没有可演奏音符"));
-    }
-    void performancePageNavigationAndReadonlyPreview() {
-        rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(30);
-        auto* pages=w.findChild<QStackedWidget*>("mainPages");
-        auto* editorTab=w.findChild<QPushButton*>("editorPageButton");auto* outputTab=w.findChild<QPushButton*>("performancePageButton");
-        auto* preview=w.findChild<rock::PianoRoll*>("performanceRoll");auto* editor=w.findChild<rock::PianoRoll*>("pianoRoll");
-        QVERIFY(pages&&editorTab&&outputTab&&preview&&editor);QCOMPARE(pages->currentIndex(),0);
-        QTest::mouseClick(outputTab,Qt::LeftButton);QCOMPARE(pages->currentIndex(),1);QVERIFY(outputTab->isChecked());QVERIFY(!editorTab->isChecked());
-        QVERIFY(!preview->editingEnabled());QVERIFY(!w.findChild<QPushButton*>("startPerformanceButton")->isEnabled());
-        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/nine-keys.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
-        QCOMPARE(pages->currentIndex(),1);QCOMPARE(w.findChild<QLabel*>("performanceSongTitle")->text(),QString("nine-keys"));
-        QVERIFY(w.findChild<QLabel*>("performanceSongInfo")->text().contains("9 个可演奏音符"));
-        QSignalSpy edits(preview,&rock::PianoRoll::notesEdited),deletes(preview,&rock::PianoRoll::deleteRequested),adds(preview,&rock::PianoRoll::addRequested);
-        preview->selectSource(0,false);QTest::keyClick(preview->viewport(),Qt::Key_Delete);QTest::keyClick(preview->viewport(),Qt::Key_Up);
-        preview->setAddMode(true);QVERIFY(!preview->addMode());
-        preview->setZoom(120);const int rh=std::max(14,(preview->viewport()->height()-44)/10);
-        drag(preview->viewport(),QPoint(105,44+8*rh+rh/2),QPoint(165,44+7*rh+rh/2));
-        QCOMPARE(edits.count(),0);QCOMPARE(deletes.count(),0);QCOMPARE(adds.count(),0);QCOMPARE(w.currentResult()->edited,0);
-        auto* mode=w.findChild<QComboBox*>("performanceTempoMode");auto* bpm=w.findChild<QDoubleSpinBox*>("performanceBpm");
-        QVERIFY(!bpm->isEnabled());mode->setCurrentIndex(1);QVERIFY(bpm->isEnabled());bpm->setValue(156);
-        w.findChild<QSpinBox*>("performanceHold")->setValue(45);
-        QTest::mouseClick(editorTab,Qt::LeftButton);QCOMPARE(pages->currentIndex(),0);QVERIFY(editor->isVisible());
-        QCOMPARE(w.findChild<QDoubleSpinBox*>("bpmSpin")->value(),120.0);
-        QCOMPARE(w.findChild<QSpinBox*>("holdSpin")->value(),30);
-        editor->selectSource(0,false);QTest::keyClick(editor->viewport(),Qt::Key_Delete);QCOMPARE(w.currentResult()->deleted,1);
-        QTest::mouseClick(outputTab,Qt::LeftButton);QVERIFY(w.findChild<QLabel*>("performanceSongInfo")->text().contains("8 个可演奏音符"));
-        QCOMPARE(bpm->value(),156.0);QVERIFY(!preview->editingEnabled());
-        QTest::mouseClick(editorTab,Qt::LeftButton);QTest::mouseClick(w.findChild<QPushButton*>("undoButton"),Qt::LeftButton);
-        QTest::mouseClick(w.findChild<QPushButton*>("expandTrackButton"),Qt::LeftButton);
-        auto* detached=w.findChild<QWidget*>("trackWindow");QVERIFY(detached->isVisible());
-        QTest::mouseClick(outputTab,Qt::LeftButton);QVERIFY(!detached->isVisible());QCOMPARE(pages->currentIndex(),1);
-        w.importFiles({qEnvironmentVariable("ROCK_SAMPLES")+"/studio-demo.mid"});QTRY_VERIFY_WITH_TIMEOUT(!w.isImporting(),10000);
-        QTest::qWait(30);QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/16-performance-page.png"));
-        w.resize(1120,740);QTest::qWait(30);QCOMPARE(w.size(),QSize(1120,740));
-        QVERIFY(w.grab().save(qEnvironmentVariable("ROCK_SCREENSHOTS")+"/17-performance-compact.png"));
-        QTest::mouseClick(editorTab,Qt::LeftButton);QVERIFY(w.findChild<QPushButton*>("playButton")->isVisible());
     }
     void detachedTrackPlaybackAndEditing() {
         rock::MainWindow w(nullptr,rock::AudioBackend::NullTest);w.show();QTest::qWait(40);

@@ -4,4 +4,6 @@
 namespace rock {
 std::unique_ptr<KeyOutput> createKeyOutput();
 DiscoveryResult discoverOutputKeyboards();
+// Called from the foreground UI in response to the user's start action.
+bool activateOutputWindow(quint64 window,quint32 process);
 }

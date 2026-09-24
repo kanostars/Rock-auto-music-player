@@ -7,6 +7,7 @@ namespace rock {
 class PerformanceController:public QAbstractNativeEventFilter {
 public:
     PerformanceController();
+    explicit PerformanceController(std::unique_ptr<KeyOutput> output);
     ~PerformanceController();
     bool start(PerformancePlan,const OutputTarget&,bool activate,QString& error);
     void togglePause();

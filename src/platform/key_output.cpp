@@ -41,7 +41,7 @@ public:
         window_=reinterpret_cast<HWND>(quintptr(target.window));process_=target.process;connected_=true;lastCheck_=0;
         if(targetStatus()==TargetStatus::Missing){error="目标窗口已关闭，请刷新窗口后重新选择。";return false;}return true;
     }
-    bool activate() override {ShowWindowAsync(window_,SW_RESTORE);return SetForegroundWindow(window_)!=0;}
+    bool activate() override {return activateOutputWindow(quintptr(window_),process_);}
     TargetStatus targetStatus() override {
         DWORD pid=0;GetWindowThreadProcessId(window_,&pid);
         if(!IsWindow(window_)||!process_||pid!=process_)return TargetStatus::Missing;
@@ -60,6 +60,23 @@ public:
     }
 };
 }
+bool activateOutputWindow(quint64 window,quint32 process) {
+    const auto target=reinterpret_cast<HWND>(quintptr(window));DWORD pid=0;
+    GetWindowThreadProcessId(target,&pid);
+    if(!target||!IsWindow(target)||!process||pid!=process)return false;
+    constexpr UINT flags=SMTO_ABORTIFHUNG|SMTO_BLOCK|SMTO_ERRORONEXIT;
+    DWORD_PTR result=0;
+    // Restore first, in order. ShowWindowAsync followed immediately by activation
+    // races the target's restore processing. Do not unmaximize an existing window.
+    if(IsIconic(target)&&!SendMessageTimeoutW(target,WM_SYSCOMMAND,SC_RESTORE,0,flags,500,&result))return false;
+    if(!IsWindowVisible(target)||IsIconic(target))return false;
+    SetForegroundWindow(target);
+    // Cross-thread foreground activation is asynchronous. Wait for the target to
+    // process it, with a bound for hung windows, then verify the actual foreground.
+    if(!SendMessageTimeoutW(target,WM_NULL,0,0,flags,500,&result))return false;
+    GetWindowThreadProcessId(target,&pid);
+    return pid==process&&IsWindowVisible(target)&&!IsIconic(target)&&GetForegroundWindow()==target;
+}
 std::unique_ptr<KeyOutput> createKeyOutput(){return std::make_unique<WindowsKeyOutput>();}
 DiscoveryResult discoverOutputKeyboards(){Driver driver;DiscoveryResult result;if(!driver.open(result.error))return result;
     for(int slot=1;slot<=10;++slot){auto id=driver.id(slot);if(id.isEmpty())continue;
@@ -67,6 +84,7 @@ DiscoveryResult discoverOutputKeyboards(){Driver driver;DiscoveryResult result;i
 }
 #else
 namespace rock {
+bool activateOutputWindow(quint64,quint32){return false;}
 std::unique_ptr<KeyOutput> createKeyOutput(){return {};}
 DiscoveryResult discoverOutputKeyboards(){return {{},"自动演奏仅支持 Windows。"};}
 }

@@ -9,14 +9,16 @@
 
 class QLabel; class QPushButton; class QComboBox; class QDoubleSpinBox;
 class QSpinBox; class QListWidget; class QTreeWidget; class QTabWidget;
-class QProgressBar; class QSplitter; class QVBoxLayout; class QStackedWidget;
+class QProgressBar; class QSplitter; class QVBoxLayout;
 namespace rock {
 class PianoRoll;
-class PerformancePage;
+class PerformancePanel;
+class KeyOutput;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent=nullptr,AudioBackend audioBackend=AudioBackend::System);
+    MainWindow(QWidget* parent,AudioBackend audioBackend,std::unique_ptr<KeyOutput> output);
     ~MainWindow() override;
     void importFiles(const QStringList& paths);
     bool isImporting() const {return busy_;}
@@ -49,8 +51,7 @@ private:
     QSplitter* workspaceSplit_{}; QVBoxLayout* outerLayout_{};
     QList<int> workspaceSizes_;
     QPushButton* expandTrack_{};
-    QStackedWidget* pages_{};
-    PerformancePage* performancePage_{};
+    PerformancePanel* performance_{};
     QTabWidget* tabs_{};
     QLabel *songTitle_{},*subtitle_{},*status_{},*details_{},*clock_{},*dirty_{},*summary_{},*zoomText_{};
     QComboBox *strategy_{},*tempoMode_{},*filter_{},*octaveMode_{};
@@ -62,10 +63,13 @@ private:
     QProgressBar* progress_{};
     AudioPlayer audio_;
     QTimer timer_; double position_{};
-    void buildUi(AudioBackend backend);
+    void buildUi(AudioBackend backend,std::unique_ptr<KeyOutput> output);
     void openTrackWindow();
     void restoreTrackPanel();
     void selectSong(int index);
+    void removeSong(int index);
+    void moveSong(int from,int to);
+    void clearSong();
     void applySettings();
     void recalculate(bool fit=false);
     void refreshResult(bool fit=false);

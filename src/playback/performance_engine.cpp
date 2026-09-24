@@ -42,11 +42,12 @@ bool PerformanceEngine::releaseAll(double now) {
 void PerformanceEngine::fail(const QString& reason,double now){const bool clean=releaseAll(now);if(clean)output_->close();state_.state=PerformanceState::Failed;state_.message=reason+(clean?QString():"；松键失败，请手动松开 B/F/G/H/J/K/T/Y/U。");}
 bool PerformanceEngine::start(PerformancePlan plan,const OutputTarget& target,bool activate,double now) {
     if(!releaseAll(now)){fail("无法释放上次演奏按键",now);return false;}
+    if(plan.countdownSeconds<1){fail("开始倒计时最少为 1 秒。",now);return false;}
     QString error;if(!output_||!output_->prepare(target,error)){if(output_)output_->close();state_.state=PerformanceState::Failed;state_.message=error;return false;}
     plan_=std::move(plan);next_=0;held_=0;lastRelease_.fill(-1e100);releaseAt_.fill(0);
-    base_=state_.position=plan_.start;anchor_=now;deadline_=now+5;remaining_=5;pausedCountdown_=false;
-    state_.state=PerformanceState::Countdown;state_.countdown=5;
-    state_.message=activate&&!output_->activate()?"未能切到目标窗口，请在倒计时结束前手动切换。":"5 秒后开始演奏，请保持目标窗口在前台。";
+    base_=state_.position=plan_.start;anchor_=now;deadline_=now+plan_.countdownSeconds;remaining_=plan_.countdownSeconds;pausedCountdown_=false;
+    state_.state=PerformanceState::Countdown;state_.countdown=plan_.countdownSeconds;
+    state_.message=activate&&!output_->activate()?"未能使目标窗口获得前台焦点，请在倒计时结束前手动切换。":"请保持目标窗口在前台。";
     return true;
 }
 void PerformanceEngine::pause(double now,const QString& reason) {
