@@ -20,10 +20,10 @@ public:
     explicit HandpanMixer(SampleBank bank);
     void prepare(const Song& song,const Conversion& result);
     void seek(double seconds);
+    void limitEnd(double seconds);
     void render(float* stereo,size_t frames,float volume);
     uint64_t cursor() const {return cursor_;}
     uint64_t endFrame() const {return endFrame_;}
-    const std::vector<AudioEvent>& events() const {return events_;}
 private:
     SampleBank bank_;
     std::vector<AudioEvent> events_;

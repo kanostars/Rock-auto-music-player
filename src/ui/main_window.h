@@ -13,15 +13,12 @@ class QProgressBar; class QSplitter; class QVBoxLayout;
 namespace rock {
 class PianoRoll;
 class PerformancePanel;
-class KeyOutput;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent=nullptr,AudioBackend audioBackend=AudioBackend::System);
-    MainWindow(QWidget* parent,AudioBackend audioBackend,std::unique_ptr<KeyOutput> output);
+    explicit MainWindow(QWidget* parent=nullptr);
     ~MainWindow() override;
     void importFiles(const QStringList& paths);
-    bool isImporting() const {return busy_;}
     const Conversion* currentResult() const;
 protected:
     bool eventFilter(QObject*,QEvent*) override;
@@ -30,14 +27,23 @@ protected:
     void dropEvent(QDropEvent*) override;
 private:
     struct EditChange {int source{};std::optional<NoteEdit> before, after;};
+    struct TimelineState {Song song;NoteEdits edits;int first{},last{-1};};
+    struct HistoryEntry {
+        HistoryEntry()=default;
+        std::vector<EditChange> changes;
+        std::optional<TimelineState> before,after;
+        HistoryEntry(std::vector<EditChange> c):changes(std::move(c)){}
+        HistoryEntry(TimelineState b,TimelineState a):before(std::move(b)),after(std::move(a)){}
+    };
     struct Session {
         QString path;
         std::shared_ptr<Song> song;
         Settings settings;
         std::shared_ptr<Conversion> result;
         NoteEdits edits;
-        std::vector<std::vector<EditChange>> history;
+        std::vector<HistoryEntry> history;
         size_t historyCursor{};
+        int rangeFirst{},rangeLast{-1}; // -1 follows the whole song, including new notes.
     };
     struct Loaded {Session session; QString error;};
     std::vector<Session> sessions_;
@@ -47,6 +53,7 @@ private:
     bool settingsPending_{};
     QListWidget* library_{}; QTreeWidget* tracks_{};
     PianoRoll* roll_{}; QWidget* workspace_{};
+    QPushButton *resetRange_{},*deleteRange_{},*createRange_{};
     QWidget *editorPanel_{},*transportPanel_{},*statusPanel_{},*trackWindow_{},*editorPlaceholder_{};
     QSplitter* workspaceSplit_{}; QVBoxLayout* outerLayout_{};
     QList<int> workspaceSizes_;
@@ -58,18 +65,19 @@ private:
     QLabel* octaveInfo_{};
     QDoubleSpinBox *bpm_{},*speed_{};
     QSpinBox *hold_{},*gap_{};
-    QPushButton *import_{},*apply_{},*play_{},*stop_{},*cancelButton_{};
+    QPushButton *import_{},*exportMidi_{},*apply_{},*play_{},*stop_{},*cancelButton_{};
     QPushButton *addNote_{},*deleteNote_{},*deleteMode_{},*undo_{},*redo_{};
     QProgressBar* progress_{};
     AudioPlayer audio_;
     QTimer timer_; double position_{};
-    void buildUi(AudioBackend backend,std::unique_ptr<KeyOutput> output);
+    void buildUi();
     void openTrackWindow();
     void restoreTrackPanel();
     void selectSong(int index);
     void removeSong(int index);
     void moveSong(int from,int to);
     void clearSong();
+    void promptImportConflicts(int firstImported);
     void applySettings();
     void recalculate(bool fit=false);
     void refreshResult(bool fit=false);
@@ -78,8 +86,10 @@ private:
     void showWarning(const QString& title,const QString& message);
     void showNote(int source);
     void showDiagnostics();
+    void exportCurrentMidi();
     void setAllTracks(bool enabled);
     void togglePlayback();
+    void startPreview();
     void pausePreview(bool reset=false);
     void refreshClock();
     void editNotes(const std::vector<MappedNote>& notes);
@@ -88,5 +98,10 @@ private:
     void commitEdits(const NoteEdits& edits);
     void stepHistory(bool redo);
     void updateEditActions();
+    std::pair<double,double> selectedRange() const;
+    void refreshRange();
+    void changeRange(double start,double end);
+    void deleteRange();
+    void createRange();
 };
 }

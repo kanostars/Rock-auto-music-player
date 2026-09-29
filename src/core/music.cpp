@@ -228,7 +228,7 @@ Conversion convert(const Song& song,const Settings& s,const NoteEdits& edits) {
         // consistent. Manual targets/additions and nearest/skip mode do not bias it.
         std::array<int,128> histogram{};
         for(const auto& n:song.notes)
-            if(!n.added&&enabled(n.track)&&(!anySolo||solo(n.track))) ++histogram.at(n.pitch);
+            if(!n.added&&!n.derived&&enabled(n.track)&&(!anySolo||solo(n.track))) ++histogram.at(n.pitch);
         auto score=[&](int shift) {
             int kept=0;long long movement=0;
             for(int pitch=0;pitch<128;++pitch) if(histogram[pitch]) {
@@ -263,6 +263,7 @@ Conversion convert(const Song& song,const Settings& s,const NoteEdits& edits) {
         }
         m.start=time(m.startTick);m.duration=time(m.endTick)-m.start;
         if(edit!=edits.end()&&edit->second.deleted) {m.mapping=Mapping::Deleted;++out.deleted;}
+        else if(edit!=edits.end()&&edit->second.skipped) {m.mapping=Mapping::ConflictSkipped;++out.skipped;}
         else if(!enabled(n.track)||(anySolo&&!solo(n.track))) {m.mapping=Mapping::Excluded; ++out.excluded;}
         else if(edit!=edits.end()) {m.mapping=Mapping::Edited;m.target=edit->second.target;++out.edited;}
         else {
@@ -290,6 +291,19 @@ Conversion convert(const Song& song,const Settings& s,const NoteEdits& edits) {
     }
     for(auto [tick,count]:chordCounts) if(count>1) ++out.chords;
     return out;
+}
+NoteEdits resolveSameKeyConflicts(const Conversion& result,const Settings& settings,bool remove){
+    std::map<std::pair<int,int>,std::vector<const MappedNote*>> groups;
+    for(const auto& note:result.notes)if(note.target>=0)groups[{note.startTick,note.target}].push_back(&note);
+    std::array<double,9> last;last.fill(-1e100);NoteEdits edits;
+    for(const auto& [key,notes]:groups){
+        const auto* first=notes.front();
+        // Compare with the last retained strike, not with a strike just removed.
+        if(first->start-last[key.second]+1e-9<(settings.holdMs+settings.gapMs)/1000.0){
+            for(const auto* note:notes)edits[note->source]={note->startTick,note->endTick,note->target,remove,!remove};
+        }else last[key.second]=first->start;
+    }
+    return edits;
 }
 std::string pitchName(int pitch) {
     static const char* names[]{"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};

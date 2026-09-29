@@ -19,9 +19,8 @@ public:
     virtual void close(){}
 };
 struct Strike {double time{};uint16_t keys{};};
-struct PerformancePlan {std::vector<Strike> strikes;double duration{},start{},hold{},gap{};int countdownSeconds{5};};
-Conversion retimePerformance(const Song&,const Conversion&,const Settings&);
-PerformancePlan makePerformancePlan(const Conversion&,double start,int holdMs,int gapMs);
+struct PerformancePlan {std::vector<Strike> strikes;double duration{},start{},hold{},gap{};int countdownSeconds{5};bool bounded{};};
+PerformancePlan makePerformancePlan(const Conversion&,double start,int holdMs,int gapMs,double end=-1);
 enum class PerformanceState {Idle,Countdown,Playing,Paused,Finished,Stopped,Failed};
 struct PerformanceSnapshot {
     PerformanceState state{PerformanceState::Idle};double position{},countdown{};QString message;

@@ -5,31 +5,21 @@
 #include <stdexcept>
 
 namespace rock {
-Conversion retimePerformance(const Song& song,const Conversion& source,const Settings& settings) {
-    if(song.ppq<=0||!std::isfinite(settings.bpm)||settings.bpm<=0||!std::isfinite(settings.speed)||settings.speed<=0)throw std::invalid_argument("演奏速度参数无效。");
-    auto result=source;result.conflicts=0;
-    auto time=[&](int tick){return (settings.fixedTempo?double(tick)/song.ppq*60/settings.bpm:song.secondsAt(tick))/settings.speed;};
-    result.duration=time(song.endTick);std::map<std::pair<int,int>,std::vector<size_t>> groups;
-    for(size_t i=0;i<result.notes.size();++i){auto& n=result.notes[i];n.start=time(n.startTick);n.duration=time(n.endTick)-n.start;n.conflict=false;
-        if(n.target>=0&&n.target<9){result.duration=std::max(result.duration,n.start+n.duration);groups[{n.startTick,n.target}].push_back(i);}}
-    std::array<double,9> last;last.fill(-1e100);
-    for(const auto& [key,ids]:groups){double time=result.notes[ids.front()].start;if(time-last[key.second]+1e-9<(settings.holdMs+settings.gapMs)/1000.0){++result.conflicts;for(auto id:ids)result.notes[id].conflict=true;}last[key.second]=time;}
-    return result;
-}
-PerformancePlan makePerformancePlan(const Conversion& result,double start,int holdMs,int gapMs) {
+PerformancePlan makePerformancePlan(const Conversion& result,double start,int holdMs,int gapMs,double end) {
     if(!std::isfinite(start)||start<0||holdMs<1||holdMs>1000||gapMs<0||gapMs>1000)throw std::invalid_argument("演奏参数超出范围。");
     PerformancePlan plan;plan.start=std::min(start,result.duration);plan.duration=result.duration;plan.hold=holdMs/1000.0;plan.gap=gapMs/1000.0;
+    if(end>=0){plan.bounded=true;plan.duration=std::min(end,result.duration);if(plan.duration<=plan.start)throw std::invalid_argument("所选播放区间为空。");}
     std::map<double,uint16_t> strikes;
-    for(const auto& note:result.notes)if(note.target>=0&&note.target<9&&note.start+1e-9>=plan.start){
+    for(const auto& note:result.notes)if(note.target>=0&&note.target<9&&note.start+1e-9>=plan.start&&(!plan.bounded||note.start<plan.duration)){
         if(!std::isfinite(note.start)||note.start<0)throw std::invalid_argument("音符时间无效。");
         strikes[note.start]|=uint16_t(1<<note.target);
     }
     std::array<double,9> last;last.fill(-1e100);
     for(auto [time,mask]:strikes){
         for(int key=0;key<9;++key)if(mask&(1<<key)){if(time-last[key]+1e-9<plan.hold+plan.gap)throw std::invalid_argument("当前演奏参数下存在同键过密冲突，请降低 BPM 或缩短按下时长 / 松开间隔。");last[key]=time;}
-        plan.strikes.push_back({time,mask});plan.duration=std::max(plan.duration,time+plan.hold);
+        plan.strikes.push_back({time,mask});if(!plan.bounded)plan.duration=std::max(plan.duration,time+plan.hold);
     }
-    if(plan.strikes.empty())throw std::invalid_argument("当前位置之后没有可演奏音符，请重新定位。");
+    if(plan.strikes.empty()&&!plan.bounded)throw std::invalid_argument("当前位置之后没有可演奏音符，请重新定位。");
     return plan;
 }
 PerformanceEngine::~PerformanceEngine(){stop();}
@@ -79,6 +69,10 @@ void PerformanceEngine::tick(double now) {
     uint16_t up=0;for(int key=0;key<9;++key)if((held_&(1<<key))&&now>=releaseAt_[key])up|=uint16_t(1<<key);
     if(up){if(!output_->send({0,up})){fail("按键释放失败，演奏终止。",now);return;}held_&=~up;for(int key=0;key<9;++key)if(up&(1<<key))lastRelease_[key]=now;}
     state_.position=std::min(plan_.duration,base_+std::max(0.0,now-anchor_));
+    if(plan_.bounded&&state_.position>=plan_.duration){
+        if(!releaseAll(now)){fail("区间结束时松键失败",now);return;}
+        output_->close();state_.state=PerformanceState::Finished;state_.message="区间演奏完成，已释放按键。";return;
+    }
     if(next_<plan_.strikes.size()&&plan_.strikes[next_].time<=state_.position+1e-9){
         const auto strike=plan_.strikes[next_];
         if(state_.position-strike.time>.1){state_.position=strike.time;pause(now,"系统调度延迟过大，已暂停；按 Ctrl+Alt+Q 从当前音符继续。");return;}

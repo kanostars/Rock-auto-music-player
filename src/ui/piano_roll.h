@@ -16,6 +16,7 @@ public:
     void setZoom(double pixelsPerSecond);
     void fitAll();
     void setPlayhead(double seconds, bool follow=false);
+    void setPlaybackRange(double first,double last){rangeStart_=first;rangeEnd_=last;viewport()->update();}
     void selectSource(int source, bool reveal=true);
     void selectSources(const std::set<int>& sources, bool reveal=false);
     const std::set<int>& selectedSources() const {return selection_;}
@@ -36,6 +37,7 @@ signals:
     void deleteRequested();
     void addRequested(double start, int target);
     void addModeChanged(bool enabled);
+    void rangeEdited(double first,double last);
 protected:
     bool event(QEvent*) override;
     void paintEvent(QPaintEvent*) override;
@@ -51,7 +53,8 @@ private:
     std::shared_ptr<const Conversion> result_;
     int filter_{-1}, selected_{-1};
     double pixels_{80}, playhead_{};
-    enum class Gesture {None, Move, LeftEdge, RightEdge, Box};
+    double rangeStart_{},rangeEnd_{-1},savedRangeStart_{},savedRangeEnd_{};
+    enum class Gesture {None, Move, LeftEdge, RightEdge, Box, RangeLeft, RangeRight};
     Gesture gesture_{Gesture::None};
     std::set<int> selection_, selectionBefore_;
     std::vector<MappedNote> originals_, previews_;
@@ -67,6 +70,8 @@ private:
     bool visibleNote(const MappedNote& n) const;
     bool editable(int source) const;
     Gesture partAt(int source, const QPointF& point) const;
+    Gesture rangePartAt(const QPointF& point) const;
+    bool draggingRange() const{return gesture_==Gesture::RangeLeft||gesture_==Gesture::RangeRight;}
     std::pair<QRectF,QRectF> handles(const MappedNote& note) const;
     void updateGesture(const QPointF& point);
     void cancelGesture();

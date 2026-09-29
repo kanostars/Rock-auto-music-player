@@ -4,13 +4,12 @@
 #include <memory>
 
 namespace rock {
-enum class AudioBackend { System, NullTest };
 SampleBank loadHandpanBank();
 class AudioPlayer {
 public:
-    explicit AudioPlayer(AudioBackend backend=AudioBackend::System);
+    AudioPlayer();
     ~AudioPlayer();
-    bool play(const Song& song,const Conversion& result,double seconds,QString& error);
+    bool play(const Song& song,const Conversion& result,double seconds,QString& error,double end=-1);
     void pause();
     void setVolume(float volume);
     double position() const;

@@ -34,15 +34,14 @@ void LiveHandpanMixer::render(float* stereo,size_t frames) {
 }
 void LiveHandpanMixer::clear(){voices_.fill({});read_.store(0);write_.store(0);}
 struct LiveHandpanPlayer::Impl {
-    explicit Impl(AudioBackend b):backend(b){}
-    AudioBackend backend;ma_device device{};bool initialized{};
+    ma_device device{};bool initialized{};
     std::unique_ptr<LiveHandpanMixer> mixer;
     static void callback(ma_device* device,void* output,const void*,ma_uint32 frames) {
         static_cast<Impl*>(device->pUserData)->mixer->render(static_cast<float*>(output),frames);
     }
     ~Impl(){if(initialized)ma_device_uninit(&device);}
 };
-LiveHandpanPlayer::LiveHandpanPlayer(AudioBackend backend):impl_(std::make_unique<Impl>(backend)){}
+LiveHandpanPlayer::LiveHandpanPlayer():impl_(std::make_unique<Impl>()){}
 LiveHandpanPlayer::~LiveHandpanPlayer()=default;
 bool LiveHandpanPlayer::start(QString& error) {
     error.clear();if(running())return true;auto& p=*impl_;
@@ -52,8 +51,8 @@ bool LiveHandpanPlayer::start(QString& error) {
         auto config=ma_device_config_init(ma_device_type_playback);config.playback.format=ma_format_f32;
         config.playback.channels=2;config.sampleRate=audioRate;config.periodSizeInMilliseconds=10;
         config.dataCallback=Impl::callback;config.pUserData=&p;
-        const ma_backend system[]{ma_backend_wasapi,ma_backend_dsound,ma_backend_winmm},test[]{ma_backend_null};
-        auto result=p.backend==AudioBackend::NullTest?ma_device_init_ex(test,1,nullptr,&config,&p.device):ma_device_init_ex(system,3,nullptr,&config,&p.device);
+        const ma_backend system[]{ma_backend_wasapi,ma_backend_dsound,ma_backend_winmm};
+        auto result=ma_device_init_ex(system,3,nullptr,&config,&p.device);
         if(result!=MA_SUCCESS){error=QString("无法打开扬声器 / 耳机（%1），请检查音频设备。重新聚焦窗口可重试。").arg(result);return false;}
         p.initialized=true;
     }

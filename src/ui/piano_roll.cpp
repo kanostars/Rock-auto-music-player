@@ -22,7 +22,7 @@ PianoRoll::PianoRoll(QWidget* parent):QAbstractScrollArea(parent) {
         int delta=lastPointer_.x()>viewport()->width()-18?12:lastPointer_.x()<gutter_+18?-12:0;
         if(!delta)return;
         auto* bar=horizontalScrollBar();
-        if(gesture_!=Gesture::Box&&delta>0&&bar->value()+delta>bar->maximum())bar->setMaximum(std::min(2000000000,bar->value()+delta));
+        if(gesture_!=Gesture::Box&&!draggingRange()&&delta>0&&bar->value()+delta>bar->maximum())bar->setMaximum(std::min(2000000000,bar->value()+delta));
         bar->setValue(bar->value()+delta);updateGesture(lastPointer_);
     });
 }
@@ -127,16 +127,31 @@ void PianoRoll::paintEvent(QPaintEvent*) {
         ++count;if(!selection_.contains(n.source))drawNote(n);
     }
     if(result_)for(int id:selection_)if(visibleNote(result_->notes[id]))
-        if(!isEditing()||gesture_==Gesture::Box||!editable(id))drawNote(result_->notes[id]);
-    if(isEditing()&&gesture_!=Gesture::Box)for(const auto& n:previews_)drawNote(n);
+        if(!isEditing()||gesture_==Gesture::Box||draggingRange()||!editable(id))drawNote(result_->notes[id]);
+    if(isEditing()&&gesture_!=Gesture::Box&&!draggingRange())for(const auto& n:previews_)drawNote(n);
     if(gesture_==Gesture::Box&&dragMoved_) {
         p.setBrush(QColor(53,94,232,30));p.setPen(QPen(QColor("#355ee8"),1,Qt::DashLine));p.drawRect(selectionRect());
+    }
+    if(result_&&rangeEnd_>=0){
+        const double a=gutter_+(rangeStart_-left)*pixels_,b=gutter_+(rangeEnd_-left)*pixels_;
+        p.fillRect(QRectF(gutter_,top_,std::max(0.0,a-gutter_),h-top_),QColor(120,140,152,55));
+        p.fillRect(QRectF(std::max(double(gutter_),b),top_,std::max(0.0,w-std::max(double(gutter_),b)),h-top_),QColor(120,140,152,55));
     }
     if(result_&&count) {
         double x=gutter_+(playhead_-left)*pixels_;
         p.setPen(QPen(QColor("#355ee8"),1.5));p.drawLine(QPointF(x,top_),QPointF(x,h));
     }
     p.restore();
+    if(result_&&result_->duration>0&&rangeEnd_>=0){
+        p.save();p.setClipRect(gutter_,top_-13,w-gutter_,h-top_+13);
+        p.setPen(QPen(QColor("#20a45b"),1.5));
+        for(double t:{rangeStart_,rangeEnd_}){
+            const double x=gutter_+(t-left)*pixels_;
+            p.drawLine(QPointF(x,top_),QPointF(x,h));
+            p.setBrush(QColor("#20a45b"));p.drawRoundedRect(QRectF(x-3,top_-8,6,11),2,2);
+        }
+        p.restore();
+    }
     p.fillRect(0,0,gutter_,h,QColor("#f6f9fa"));
     p.setPen(QColor("#83949f"));p.setFont(QFont("Microsoft YaHei UI",9));
     p.drawText(QRect(16,9,70,24),Qt::AlignVCenter,"按键 / 音高");
@@ -182,6 +197,12 @@ int PianoRoll::hit(const QPointF& point) const {
 void PianoRoll::mousePressEvent(QMouseEvent* e) {
     if(e->button()!=Qt::LeftButton) return;
     setFocus(Qt::MouseFocusReason);cancelGesture();
+    const auto boundary=(e->modifiers()&(Qt::ControlModifier|Qt::ShiftModifier))?Gesture::None:rangePartAt(e->position());
+    if(boundary!=Gesture::None){
+        emit editStarted();gesture_=boundary;savedRangeStart_=rangeStart_;savedRangeEnd_=rangeEnd_;
+        pressPosition_=lastPointer_=e->position();pressOffset_=horizontalScrollBar()->value();dragMoved_=false;
+        dragScroll_.start();viewport()->setCursor(Qt::SizeHorCursor);return;
+    }
     int id=hit(e->position());
     if(addMode_&&editingEnabled_&&result_&&id<0) {
         const auto point=e->position();
@@ -225,6 +246,10 @@ void PianoRoll::mousePressEvent(QMouseEvent* e) {
 }
 void PianoRoll::mouseMoveEvent(QMouseEvent* e) {
     if(isEditing()) {lastPointer_=e->position();updateGesture(lastPointer_);return;}
+    if(rangePartAt(e->position())!=Gesture::None){
+        viewport()->setCursor(Qt::SizeHorCursor);
+        QToolTip::showText(e->globalPosition().toPoint(),QString("拖动绿色边界调整区间\n%1 s — %2 s · %3 s\nEsc 取消拖动").arg(rangeStart_,0,'f',3).arg(rangeEnd_,0,'f',3).arg(rangeEnd_-rangeStart_,0,'f',3),viewport());return;
+    }
     int id=hit(e->position());
     if(id<0&&addMode_&&editingEnabled_) {
         const auto point=e->position();
@@ -269,10 +294,25 @@ PianoRoll::Gesture PianoRoll::partAt(int source,const QPointF& point) const {
     return Gesture::Move;
 }
 bool PianoRoll::isEditing() const {return gesture_!=Gesture::None;}
+PianoRoll::Gesture PianoRoll::rangePartAt(const QPointF& point) const {
+    if(!editingEnabled_||!result_||result_->duration<=0||rangeEnd_<0||point.y()<top_-13||point.x()<gutter_)return Gesture::None;
+    const double a=gutter_+rangeStart_*pixels_-horizontalScrollBar()->value(),b=gutter_+rangeEnd_*pixels_-horizontalScrollBar()->value();
+    const double radius=point.y()<top_+6?7:3;
+    const double da=std::abs(point.x()-a),db=std::abs(point.x()-b);
+    if(std::min(da,db)>radius)return Gesture::None;
+    if(point.y()>=top_+6&&hit(point)>=0)return Gesture::None; // Preserve note edge editing under a boundary.
+    return da<=db?Gesture::RangeLeft:Gesture::RangeRight;
+}
 void PianoRoll::updateGesture(const QPointF& point) {
     if(!isEditing())return;
     if(!dragMoved_&&(point-pressPosition_).manhattanLength()<QApplication::startDragDistance())return;
     dragMoved_=true;QToolTip::hideText();
+    if(draggingRange()){
+        const double delta=(point.x()-pressPosition_.x()+horizontalScrollBar()->value()-pressOffset_)/pixels_;
+        if(gesture_==Gesture::RangeLeft)rangeStart_=std::clamp(savedRangeStart_+delta,0.0,std::max(0.0,rangeEnd_-1e-6));
+        else rangeEnd_=std::clamp(savedRangeEnd_+delta,std::min(result_->duration,rangeStart_+1e-6),result_->duration);
+        viewport()->setCursor(Qt::SizeHorCursor);viewport()->update();return;
+    }
     if(gesture_==Gesture::Box) {
         lastPointer_=point;selection_=additiveBox_?selectionBefore_:std::set<int>{};
         const auto box=selectionRect();
@@ -305,12 +345,17 @@ void PianoRoll::updateGesture(const QPointF& point) {
     viewport()->update();
 }
 void PianoRoll::cancelGesture() {
+    if(draggingRange()){rangeStart_=savedRangeStart_;rangeEnd_=savedRangeEnd_;}
     if(gesture_==Gesture::Box){selection_=selectionBefore_;notifySelection();}
     dragScroll_.stop();gesture_=Gesture::None;dragMoved_=false;viewport()->unsetCursor();viewport()->update();
 }
 void PianoRoll::mouseReleaseEvent(QMouseEvent* e) {
     if(e->button()!=Qt::LeftButton||!isEditing())return;
     updateGesture(e->position());
+    if(draggingRange()){
+        const double first=rangeStart_,last=rangeEnd_;const bool changed=dragMoved_;
+        gesture_=Gesture::None;cancelGesture();if(changed)emit rangeEdited(first,last);return;
+    }
     if(gesture_==Gesture::Box) {
         bool seek=!dragMoved_&&!additiveBox_;gesture_=Gesture::None;cancelGesture();
         if(seek)emit seekRequested(std::clamp((e->position().x()-gutter_+horizontalScrollBar()->value())/pixels_,0.0,result_->duration));

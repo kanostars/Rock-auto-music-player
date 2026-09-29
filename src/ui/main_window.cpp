@@ -1,5 +1,8 @@
 #include "main_window.h"
+#include "core/midi_export.h"
 #include "piano_roll.h"
+#include <QPainter>
+#include <QStyle>
 #include "performance_panel.h"
 #include "range_spinbox.h"
 #include <QCloseEvent>
@@ -19,6 +22,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSaveFile>
 #include <QShortcut>
 #include <QSlider>
 #include <QSignalBlocker>
@@ -47,15 +51,14 @@ QString formatTime(double seconds) {
 }
 QString noteName(int p) {return QString::fromStdString(pitchName(p));}
 }
-MainWindow::MainWindow(QWidget* parent,AudioBackend audioBackend):MainWindow(parent,audioBackend,{}) {}
-MainWindow::MainWindow(QWidget* parent,AudioBackend audioBackend,std::unique_ptr<KeyOutput> output):QMainWindow(parent),audio_(audioBackend) {
+MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
     setWindowTitle("RockAutoMusicPlay · 九键音乐工作台");resize(1460,900);setMinimumSize(1120,740);setAcceptDrops(true);
-    buildUi(audioBackend,std::move(output));
+    buildUi();
     connect(&importWatcher_,&QFutureWatcher<std::vector<Loaded>>::finished,this,[this] {
         auto loaded=importWatcher_.result();
-        busy_=false;performance_->setLibraryBusy(false);import_->setEnabled(true);workspace_->setEnabled(true);editorPanel_->setEnabled(true);progress_->hide();cancelButton_->hide();
+        busy_=false;performance_->setLibraryBusy(false);import_->setEnabled(true);workspace_->setEnabled(true);editorPanel_->setEnabled(true);progress_->hide();cancelButton_->hide();updateEditActions();
         if(cancel_->load()) {status_->setText("导入已取消，已有曲目保留。");return;}
-        QStringList errors;int last=-1;
+        QStringList errors;int last=-1;const int firstImported=static_cast<int>(sessions_.size());
         for(auto& item:loaded) {
             if(!item.error.isEmpty()) {errors<<QFileInfo(item.session.path).fileName()+"："+item.error;continue;}
             sessions_.push_back(std::move(item.session));
@@ -65,20 +68,21 @@ MainWindow::MainWindow(QWidget* parent,AudioBackend audioBackend,std::unique_ptr
         }
         if(last>=0) library_->setCurrentRow(last);
         if(!errors.isEmpty()) {status_->setText("导入失败："+errors.join("；"));status_->setToolTip(errors.join('\n'));}
+        promptImportConflicts(firstImported);
     });
     timer_.setInterval(16);
     connect(&timer_,&QTimer::timeout,this,[this]{
         const auto* r=currentResult();if(!r){pausePreview();return;}
-        position_=std::min(r->duration,audio_.position());
+        position_=std::min(selectedRange().second,audio_.position());
         roll_->setPlayhead(position_,true);refreshClock();
-        if(audio_.finished())pausePreview();
+        if(audio_.finished()){pausePreview();performance_->previewFinished();}
         else if(!audio_.running()){pausePreview();status_->setText("音频输出已中断，请检查系统默认输出设备后重新试听。");}
     });
 }
 MainWindow::~MainWindow() {audio_.pause();if(cancel_)cancel_->store(true);importWatcher_.waitForFinished();}
 const Conversion* MainWindow::currentResult() const {return current_>=0?sessions_[current_].result.get():nullptr;}
 
-void MainWindow::buildUi(AudioBackend backend,std::unique_ptr<KeyOutput> output) {
+void MainWindow::buildUi() {
     setStyleSheet(R"(
         QMainWindow, QWidget#root, QWidget#trackWindow { background: #eef3f5; color: #203d4e; }
         QWidget { font-family: 'Microsoft YaHei UI'; font-size: 12px; color: #203d4e; }
@@ -175,8 +179,33 @@ void MainWindow::buildUi(AudioBackend backend,std::unique_ptr<KeyOutput> output)
     undo_=button("撤销","undoButton");undo_->setToolTip("撤销音符编辑（Ctrl+Z）");undo_->setEnabled(false);
     redo_=button("重做","redoButton");redo_->setToolTip("重做音符编辑（Ctrl+Y / Ctrl+Shift+Z）");redo_->setEnabled(false);
     for(auto* b:{addNote_,deleteNote_,deleteMode_,undo_,redo_}){b->setStyleSheet("padding:6px 9px;");editBar->addWidget(b);}
-    editBar->addStretch();auto* editHint=label("框选 / 拖动","muted");editHint->setToolTip("空白处拖动框选；Ctrl/Shift 追加选择；Ctrl+A 全选当前显示音符\n拖动选中音符可整体移动，拖动任一两端可批量调整时长\n↑/↓ 整体升降一个九键音级，B～U 为上下边界；Delete 批量删除；Esc 取消\n添加模式下点击空白创建音符，再点按钮或 Esc 退出");editBar->addWidget(editHint);cl->addLayout(editBar);
+    editBar->addSpacing(18);
+    exportMidi_=button("导出 MIDI","exportMidiButton");exportMidi_->setEnabled(false);exportMidi_->setStyleSheet("padding:6px 9px;");
+    exportMidi_->setToolTip("导出当前曲目的完整九键谱，包含音符编辑与已应用的节奏设置");editBar->addWidget(exportMidi_);
+    connect(exportMidi_,&QPushButton::clicked,this,&MainWindow::exportCurrentMidi);
+    editBar->addStretch();
+    resetRange_=button("","resetTimelineRange");resetRange_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+    deleteRange_=button("","deleteTimeRange");createRange_=button("","createTimeRange");
+    auto rangeIcon=[](bool create){
+        QPixmap pixmap(24,24);pixmap.fill(Qt::transparent);QPainter painter(&pixmap);painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor("#315162"),1.7,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
+        if(create){painter.drawRoundedRect(QRectF(3,4,14,16),2,2);painter.fillRect(QRect(12,10,11,13),Qt::white);
+            painter.setPen(QPen(QColor("#20a45b"),2,Qt::SolidLine,Qt::RoundCap));painter.drawLine(17,12,17,21);painter.drawLine(13,16,21,16);}
+        else {painter.drawEllipse(QRectF(3,3,6,6));painter.drawEllipse(QRectF(3,15,6,6));painter.drawLine(8,8,20,20);painter.drawLine(8,16,20,4);}
+        return QIcon(pixmap);
+    };
+    deleteRange_->setIcon(rangeIcon(false));createRange_->setIcon(rangeIcon(true));
+    resetRange_->setAccessibleName("重置片段区间");deleteRange_->setAccessibleName("删除片段");createRange_->setAccessibleName("创建空片段");
+    resetRange_->setToolTip("重置片段区间：覆盖整首歌");
+    deleteRange_->setToolTip("删除片段：删除所选时间（所有音轨），后续音符前移，可撤销");
+    createRange_->setToolTip("创建空片段：在区间起点插入等长空白，后续音符后移，可撤销");
+    for(auto* b:{resetRange_,deleteRange_,createRange_}){b->setFixedSize(28,28);b->setIconSize(QSize(20,20));b->setStyleSheet("padding:3px;");editBar->addWidget(b);}
+    cl->addLayout(editBar);
+    connect(resetRange_,&QPushButton::clicked,this,[this]{if(current_<0)return;pausePreview();auto& s=sessions_[current_];s.rangeFirst=0;s.rangeLast=-1;refreshRange();});
+    connect(deleteRange_,&QPushButton::clicked,this,&MainWindow::deleteRange);
+    connect(createRange_,&QPushButton::clicked,this,&MainWindow::createRange);
     roll_=new PianoRoll;cl->addWidget(roll_,1);
+    connect(roll_,&PianoRoll::rangeEdited,this,&MainWindow::changeRange);
     auto* legend=new QHBoxLayout;auto* legendText=label("● 原样保留    ● 近似转换    ● 同键冲突","muted");legendText->setTextFormat(Qt::RichText);
     legendText->setText("<span style='color:#189e91'>●</span> 同音名　<span style='color:#d5a14a'>●</span> 近似　<span style='color:#6582bd'>●</span> 已编辑　<span style='color:#d4656d'>●</span> 冲突");legend->addWidget(legendText);legend->addStretch();
     auto* minus=button("−");auto* plus=button("＋");minus->setFixedWidth(34);plus->setFixedWidth(34);zoomText_=label("80 px/s","muted");legend->addWidget(minus);legend->addWidget(zoomText_);legend->addWidget(plus);cl->addLayout(legend);
@@ -235,7 +264,7 @@ void MainWindow::buildUi(AudioBackend backend,std::unique_ptr<KeyOutput> output)
     auto* detailPage=new QWidget;auto* dl=new QVBoxLayout(detailPage);dl->setContentsMargins(16,24,16,20);
     dl->addWidget(label("音符详情","section"));details_=label("点击轨道上的音符，查看原始音高、转换结果与时间。","muted");details_->setObjectName("noteDetails");details_->setWordWrap(true);details_->setTextInteractionFlags(Qt::TextSelectableByMouse);details_->setAlignment(Qt::AlignTop);dl->addWidget(details_,1);tabs_->addTab(detailPage,"音符详情");
     auto* outputScroll=new QScrollArea;outputScroll->setWidgetResizable(true);
-    performance_=new PerformancePanel(nullptr,{},backend,std::move(output));performance_->setLibrary(library_);outputScroll->setWidget(performance_);tabs_->addTab(outputScroll,"自动演奏");
+    performance_=new PerformancePanel;performance_->setLibrary(library_);outputScroll->setWidget(performance_);tabs_->addTab(outputScroll,"自动演奏");
     ll->insertWidget(3,performance_->playlistControls());performance_->playlistControls()->show();
     connect(apply_,&QPushButton::clicked,this,&MainWindow::applySettings);
     connect(strategy_,qOverload<int>(&QComboBox::currentIndexChanged),this,&MainWindow::markDirty);
@@ -262,6 +291,7 @@ void MainWindow::buildUi(AudioBackend backend,std::unique_ptr<KeyOutput> output)
     statusLine->addWidget(summary_);outer->addWidget(statusPanel_);
 
     connect(performance_,&PerformancePanel::songChangeRequested,this,[this](int row){if(!busy_)library_->setCurrentRow(row);});
+    connect(performance_,&PerformancePanel::previewStartRequested,this,[this]{pausePreview(true);startPreview();});
     connect(performance_,&PerformancePanel::songRemoveRequested,this,&MainWindow::removeSong);
     connect(performance_,&PerformancePanel::songMoveRequested,this,&MainWindow::moveSong);
     connect(performance_,&PerformancePanel::sourcePositionChanged,this,[this](double seconds){
@@ -339,8 +369,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 void MainWindow::importFiles(const QStringList& paths) {
     if(paths.isEmpty()||busy_)return;
+    if(auto* prompt=findChild<QMessageBox*>("importConflictDialog");prompt&&prompt->isVisible())return;
     performance_->stopPerformance();performance_->setLibraryBusy(true);
-    pausePreview();busy_=true;import_->setEnabled(false);workspace_->setEnabled(false);editorPanel_->setEnabled(false);progress_->show();cancelButton_->show();
+    pausePreview();busy_=true;import_->setEnabled(false);exportMidi_->setEnabled(false);workspace_->setEnabled(false);editorPanel_->setEnabled(false);progress_->show();cancelButton_->show();
     status_->setText("正在读取 MIDI 并转换九键音符…");cancel_=std::make_shared<std::atomic_bool>(false);
     importWatcher_.setFuture(QtConcurrent::run([paths,cancel=cancel_] {
         std::vector<Loaded> loaded;
@@ -361,6 +392,48 @@ void MainWindow::importFiles(const QStringList& paths) {
         }
         return loaded;
     }));
+}
+void MainWindow::promptImportConflicts(int firstImported){
+    std::vector<std::shared_ptr<Song>> affected;int conflicts=0,notes=0;
+    QStringList names;
+    for(int i=firstImported;i<static_cast<int>(sessions_.size());++i){
+        const auto& s=sessions_[i];if(!s.result->conflicts)continue;
+        affected.push_back(s.song);conflicts+=s.result->conflicts;
+        notes+=static_cast<int>(resolveSameKeyConflicts(*s.result,s.settings,false).size());
+        names<<QFileInfo(s.path).fileName();
+    }
+    if(affected.empty())return;
+    auto* box=new QMessageBox(QMessageBox::Warning,"导入曲目存在同键冲突",
+        QString("本次导入的 %1 首曲目存在 %2 处同键过密冲突。\n按当前按下时长与松开间隔，需要处理 %3 个音符。\n\n跳过：保留在“已跳过”行，不参与试听、演奏或导出。\n删除：从当前曲谱移除，可撤销。\n保留：维持原样，消除冲突后才能试听或演奏。\n\n跳过和删除均可通过撤销恢复；原 MIDI 文件不会修改。").arg(affected.size()).arg(conflicts).arg(notes),QMessageBox::NoButton,roll_->window());
+    box->setObjectName("importConflictDialog");box->setAttribute(Qt::WA_DeleteOnClose);box->setTextFormat(Qt::PlainText);
+    box->setDetailedText(names.join('\n'));box->setWindowModality(Qt::WindowModal);
+    box->setStyleSheet("QMessageBox {background:#eef3f5;} QLabel {color:#203d4e;}");
+    auto* skip=box->addButton("跳过冲突音符",QMessageBox::ActionRole);skip->setObjectName("skipImportConflicts");
+    auto* remove=box->addButton("删除冲突音符",QMessageBox::DestructiveRole);remove->setObjectName("deleteImportConflicts");
+    auto* keep=box->addButton("保留",QMessageBox::RejectRole);keep->setObjectName("keepImportConflicts");
+    box->setDefaultButton(keep);box->setEscapeButton(keep);
+    connect(box,&QMessageBox::finished,this,[this,box,skip,remove,affected](int){
+        const bool deleting=box->clickedButton()==remove;
+        if(!deleting&&box->clickedButton()!=skip)return;
+        int changed=0;
+        for(auto& s:sessions_){
+            if(std::find(affected.begin(),affected.end(),s.song)==affected.end())continue;
+            const auto edits=resolveSameKeyConflicts(*s.result,s.settings,deleting);
+            std::vector<EditChange> changes;
+            for(const auto& [source,edit]:edits){
+                std::optional<NoteEdit> before;
+                if(auto it=s.edits.find(source);it!=s.edits.end())before=it->second;
+                changes.push_back({source,before,edit});s.edits[source]=edit;
+            }
+            if(changes.empty())continue;
+            changed+=static_cast<int>(changes.size());s.history.resize(s.historyCursor);s.history.push_back(std::move(changes));
+            if(s.history.size()>256)s.history.erase(s.history.begin());s.historyCursor=s.history.size();
+            s.result=std::make_shared<Conversion>(convert(*s.song,s.settings,s.edits));
+        }
+        if(current_>=0)refreshResult(false);
+        status_->setText(QString("已%1 %2 个冲突音符，可在对应曲目中撤销。").arg(deleting?"删除":"跳过").arg(changed));
+    });
+    box->open();
 }
 void MainWindow::selectSong(int index) {
     if(index<0||index>=static_cast<int>(sessions_.size()))return;
@@ -414,7 +487,7 @@ void MainWindow::clearSong(){
     songTitle_->setText("尚未选择歌曲");subtitle_->setText("请导入 MIDI 文件");summary_->clear();details_->clear();
     octaveInfo_->setText("导入后显示整体移调与八度折叠");dirty_->setText("设置已应用");
     play_->setEnabled(false);stop_->setEnabled(false);apply_->setEnabled(false);tabs_->setEnabled(true);
-    status_->setText("曲目库为空，请导入 MIDI。");updating_=false;updateEditActions();refreshClock();
+    status_->setText("曲目库为空，请导入 MIDI。");updating_=false;refreshRange();updateEditActions();refreshClock();
 }
 void MainWindow::markDirty() {if(!updating_&&current_>=0){settingsPending_=true;dirty_->setText("有未应用设置 · 点击下方应用");}}
 void MainWindow::showWarning(const QString& title,const QString& message) {
@@ -448,7 +521,7 @@ void MainWindow::refreshResult(bool fit) {
     std::vector<int> added(s.song->tracks.size());int originalCount=0,addedCount=0;
     for(size_t i=0;i<s.song->notes.size();++i) {
         const auto& n=s.song->notes[i];
-        if(!n.added){++originalCount;continue;}
+        if(!n.added){if(!n.derived)++originalCount;continue;}
         if(auto it=s.edits.find(static_cast<int>(i));it!=s.edits.end()&&!it->second.deleted){++added[n.track];++addedCount;}
     }
     subtitle_->setText(QString("SMF %1 / %2 PPQ · %3 个音轨 · <span style='color:#516c7c'>%4 个原始音符</span>"
@@ -474,7 +547,7 @@ void MainWindow::refreshResult(bool fit) {
     if(s.song->notes.empty())status_->setText("文件中没有有效音符，仅包含空轨道或元事件。");
     else status_->setText(QString("%1 次同键重合已合并 · %2 条导入提示 · 编辑即时生效，可撤销；重新转换保留手工修改").arg(r.merged).arg(s.song->warnings.size()));
     if(roll_->selectedSource()>=0)showNote(roll_->selectedSource());
-    updateEditActions();refreshClock();
+    refreshRange();updateEditActions();refreshClock();
 }
 void MainWindow::setAllTracks(bool enabled) {
     if(performance_->active())return;
@@ -484,18 +557,23 @@ void MainWindow::setAllTracks(bool enabled) {
     updating_=false;recalculate();
 }
 void MainWindow::togglePlayback() {
-    performance_->stopPerformance();
+    if(performance_->active())performance_->stopPerformance();
     if(timer_.isActive()){pausePreview();return;}
+    startPreview();
+}
+void MainWindow::startPreview() {
     const auto* r=currentResult();if(!r||!play_->isEnabled())return;
     if(!validateParameters())return;
     if(settingsPending_){showWarning("请先应用参数","转换参数已修改，请先点击“应用设置 · 重新转换”，检查更新后的同键冲突后再试听。");return;}
-    if(r->conflicts>0) {
-        showWarning("存在同键冲突，无法试听",QString("当前曲目有 %1 处同键过密冲突，已阻止音频播放。\n\n请通过转换报告定位冲突，降低播放倍率、缩短按下时长/松开后间隔，或移动、删除冲突音符。重新转换并消除冲突后再试听。\n不同键的和弦不会阻止播放。").arg(r->conflicts));return;
+    const auto [first,last]=selectedRange();if(last<=first)return;
+    auto segment=playbackRange(*r,first,last,sessions_[current_].settings);
+    if(segment.conflicts>0) {
+        showWarning("存在同键冲突，无法试听",QString("所选区间有 %1 处同键过密冲突，已阻止音频播放。\n\n请通过转换报告定位冲突，降低播放倍率、缩短按下时长/松开后间隔，或移动、删除冲突音符。重新转换并消除冲突后再试听。\n不同键的和弦不会阻止播放。").arg(segment.conflicts));return;
     }
-    if(position_>=r->duration)position_=0;
+    if(position_<first||position_>=last)position_=first;
     QString error;
-    if(!audio_.play(*sessions_[current_].song,*r,position_,error)){status_->setText(error);return;}
-    timer_.start();deleteMode_->setChecked(false);roll_->setEditingEnabled(false);updateEditActions();
+    if(!audio_.play(*sessions_[current_].song,segment,position_,error,last)){status_->setText(error);return;}
+    timer_.start();performance_->setPreviewPlaying(true);deleteMode_->setChecked(false);roll_->setEditingEnabled(false);updateEditActions();
     play_->setText("暂停试听");status_->setText("手碟试听中 · 音符编辑已锁定 · 空格暂停/继续");
 }
 void MainWindow::showNote(int source) {
@@ -508,6 +586,7 @@ void MainWindow::showNote(int source) {
     const auto& n=s.song->notes[source];const auto& m=s.result->notes[source];
     QString target=m.target<0?"未映射":QString("%1  /  %2").arg(QChar(keys[m.target])).arg(noteName(pitches[m.target]));
     QString reason=m.mapping==Mapping::Edited?(n.added?"手工新增（重新转换会保留）":"手工编辑（重新转换会保留）"):m.mapping==Mapping::Deleted?"已手工删除（可撤销）":m.mapping==Mapping::Exact?(pitches[m.target]!=n.pitch+s.result->transpose?"同音名八度折叠":s.result->transpose?"整体移调后准确映射":"原样保留"):m.mapping==Mapping::Approximate?"无同音名，替代为最近音":m.mapping==Mapping::Skipped?"无同音名，按当前策略跳过":"音轨未参与转换";
+    if(m.mapping==Mapping::ConflictSkipped)reason="导入时跳过同键冲突（可撤销，重新转换会保留）";
     if(m.mapping==Mapping::Exact||m.mapping==Mapping::Approximate||m.mapping==Mapping::Skipped)
         reason+=QString("\n整体移调：%1 半音").arg(s.result->transpose);
     if(m.mapping==Mapping::Exact&&pitches[m.target]!=n.pitch+s.result->transpose)
@@ -548,6 +627,7 @@ void MainWindow::showDiagnostics() {
         for(int index=begin;index<end;++index) {
             const auto& m=*ordered[index];const auto& n=song->notes[m.source];const int row=index-begin;
             QString state=m.mapping==Mapping::Deleted?"手工删除":m.mapping==Mapping::Excluded?"音轨已排除":m.mapping==Mapping::Skipped?"无同音名，跳过":m.mapping==Mapping::Edited?"手工编辑":m.mapping==Mapping::Exact?(pitches[m.target]!=n.pitch+result->transpose?"同音名 · 八度折叠":result->transpose?"整体移调 · 准确":"原音准确映射"):"无同音名 · 近似替代";
+            if(m.mapping==Mapping::ConflictSkipped)state="同键冲突，已跳过";
             if(n.added&&m.mapping==Mapping::Edited)state="手工新增";
             if(m.conflict)state+=" · 同键过密";
             QStringList values{QString::number(m.start,'f',3),noteName(n.pitch),m.target<0?"—":noteName(pitches[m.target]),m.target<0?"—":QString(QChar(keys[m.target])),QString::number(song->tracks[n.track].source+1),state};
@@ -568,11 +648,33 @@ void MainWindow::showDiagnostics() {
     });
     auto* close=new QDialogButtonBox(QDialogButtonBox::Close);close->button(QDialogButtonBox::Close)->setText("关闭");close->button(QDialogButtonBox::Close)->setAutoDefault(false);connect(close,&QDialogButtonBox::rejected,dialog,&QDialog::reject);layout->addWidget(close);dialog->setModal(true);dialog->show();
 }
+void MainWindow::exportCurrentMidi(){
+    if(current_<0||busy_||performance_->active())return;
+    pausePreview();
+    if(!validateParameters())return;
+    if(settingsPending_){showWarning("请先应用参数","转换参数已修改，请先应用设置，再导出当前曲目的 MIDI。");return;}
+    const auto& session=sessions_[current_];
+    std::string bytes;
+    try{bytes=exportMidi(*session.song,*session.result,session.settings);}
+    catch(const std::exception& e){showWarning("导出失败",QString::fromUtf8(e.what()));return;}
+    const QFileInfo source(session.path);
+    QFileDialog dialog(roll_->window(),"导出当前曲目 MIDI",source.absolutePath(),"MIDI 文件 (*.mid *.midi)");
+    dialog.setObjectName("exportMidiDialog");dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);dialog.setDefaultSuffix("mid");
+    dialog.selectFile(source.completeBaseName()+"_九键.mid");
+    if(dialog.exec()!=QDialog::Accepted||dialog.selectedFiles().isEmpty())return;
+    const auto path=dialog.selectedFiles().front();QSaveFile file(path);
+    if(!file.open(QIODevice::WriteOnly)||file.write(bytes.data(),static_cast<qint64>(bytes.size()))!=static_cast<qint64>(bytes.size())||!file.commit()){
+        showWarning("导出失败","无法保存 MIDI："+file.errorString());return;
+    }
+    status_->setText("已导出当前曲目 MIDI："+QFileInfo(path).fileName());status_->setToolTip(path);
+}
 void MainWindow::pausePreview(bool reset) {
     bool wasPlaying=timer_.isActive();timer_.stop();audio_.pause();play_->setText("手碟试听");
+    if(performance_)performance_->setPreviewPlaying(false);
     roll_->setEditingEnabled(!performance_||!performance_->active());updateEditActions();
-    if(wasPlaying&&currentResult()){position_=std::min(currentResult()->duration,audio_.position());roll_->setPlayhead(position_);status_->setText(audio_.finished()?"试听结束。":"试听已暂停，再次点击可从当前位置继续。");}
-    if(reset){position_=0;roll_->setPlayhead(0);}refreshClock();
+    if(wasPlaying&&currentResult()){position_=std::min(selectedRange().second,audio_.position());roll_->setPlayhead(position_);status_->setText(audio_.finished()?"试听结束。":"试听已暂停，再次点击可从当前位置继续。");}
+    if(reset){position_=selectedRange().first;roll_->setPlayhead(position_);}refreshClock();
 }
 void MainWindow::refreshClock() {
     clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
@@ -647,7 +749,7 @@ void MainWindow::commitEdits(const NoteEdits& edits) {
         // Rounding a sub-tick movement should not create a spurious edit.
         if(source<static_cast<int>(s.result->notes.size())) {
             const auto& current=s.result->notes[source];
-            if(!edit.deleted&&current.target>=0&&current.startTick==edit.startTick&&current.endTick==edit.endTick&&current.target==edit.target)continue;
+            if(!edit.deleted&&!edit.skipped&&current.target>=0&&current.startTick==edit.startTick&&current.endTick==edit.endTick&&current.target==edit.target)continue;
         }
         changes.push_back({source,before,edit});
     }
@@ -662,7 +764,19 @@ void MainWindow::stepHistory(bool redo) {
     if(performance_->active())return;
     if(current_<0||busy_||timer_.isActive()||roll_->isEditing())return;auto& s=sessions_[current_];
     if((redo&&s.historyCursor==s.history.size())||(!redo&&s.historyCursor==0))return;
-    const auto& changes=s.history[redo?s.historyCursor++:--s.historyCursor];
+    const auto& entry=s.history[redo?s.historyCursor++:--s.historyCursor];
+    if(entry.before){
+        const auto& state=redo?*entry.after:*entry.before;
+        // Later undone additions retain their source IDs for a subsequent redo.
+        auto restored=state.song;
+        if(s.song->notes.size()>restored.notes.size()){
+            const auto oldSize=restored.notes.size();restored.notes.insert(restored.notes.end(),s.song->notes.begin()+oldSize,s.song->notes.end());
+            for(size_t i=oldSize;i<restored.notes.size();++i)restored.notes[i].added=true;
+        }
+        if(s.song->tracks.size()>restored.tracks.size())restored.tracks.insert(restored.tracks.end(),s.song->tracks.begin()+restored.tracks.size(),s.song->tracks.end());
+        *s.song=std::move(restored);s.edits=state.edits;s.rangeFirst=state.first;s.rangeLast=state.last;recalculate();return;
+    }
+    const auto& changes=entry.changes;
     std::set<int> selected;
     for(const auto& change:changes) {
         const auto& edit=redo?change.after:change.before;
@@ -673,12 +787,64 @@ void MainWindow::stepHistory(bool redo) {
 }
 void MainWindow::updateEditActions() {
     bool hasSong=current_>=0, editable=hasSong&&!timer_.isActive()&&(!performance_||!performance_->active());
+    exportMidi_->setEnabled(hasSong&&!busy_&&(!performance_||!performance_->active()));
+    resetRange_->setEnabled(editable&&!busy_);
+    deleteRange_->setEnabled(editable&&!busy_&&selectedRange().second>selectedRange().first);
+    createRange_->setEnabled(deleteRange_->isEnabled());
     addNote_->setEnabled(editable);
     deleteMode_->setEnabled(editable);deleteNote_->setEnabled(editable&&roll_->selectedSource()>=0);
     deleteNote_->setText(roll_->selectedSources().size()>1?QString("删除 (%1)").arg(roll_->selectedSources().size()):"删除");
     deleteNote_->setMinimumWidth(deleteNote_->fontMetrics().horizontalAdvance(deleteNote_->text())+24);
     undo_->setEnabled(editable&&sessions_[current_].historyCursor>0);
     redo_->setEnabled(editable&&sessions_[current_].historyCursor<sessions_[current_].history.size());
+}
+std::pair<double,double> MainWindow::selectedRange() const {
+    if(current_<0)return {0,0};const auto& s=sessions_[current_];const double duration=s.result?s.result->duration:0;
+    const double first=std::clamp(secondsAtTick(*s.song,s.settings,s.rangeFirst),0.0,duration);
+    const double last=s.rangeLast<0?duration:std::clamp(secondsAtTick(*s.song,s.settings,s.rangeLast),first,duration);
+    return {first,last};
+}
+void MainWindow::refreshRange(){
+    const auto [first,last]=selectedRange();
+    roll_->setPlaybackRange(first,last);performance_->setPlaybackRange(first,last);
+    if(position_<first||position_>last){position_=first;roll_->setPlayhead(position_);}
+    refreshClock();updateEditActions();
+}
+void MainWindow::changeRange(double start,double end){
+    if(current_<0||busy_||performance_->active())return;pausePreview();auto& s=sessions_[current_];
+    int first=tickAtSeconds(*s.song,s.settings,start),last=tickAtSeconds(*s.song,s.settings,end);
+    if(last<=first){refreshRange();return;}
+    s.rangeFirst=first;s.rangeLast=end>=s.result->duration-1e-9?-1:last;
+    position_=selectedRange().first;roll_->setPlayhead(position_,true);refreshRange();
+}
+void MainWindow::deleteRange(){
+    if(current_<0||busy_||timer_.isActive()||performance_->active()||roll_->isEditing())return;
+    auto& s=sessions_[current_];const auto [first,last]=selectedRange();
+    const int a=tickAtSeconds(*s.song,s.settings,first),b=tickAtSeconds(*s.song,s.settings,last);if(b<=a)return;
+    TimelineState before{*s.song,s.edits,s.rangeFirst,s.rangeLast};
+    deleteTimeRange(*s.song,s.edits,a,b);
+    s.result=std::make_shared<Conversion>(convert(*s.song,s.settings,s.edits));
+    // Keep the handles at their displayed times, including across a tempo splice.
+    // Only clamp when the shortened song can no longer contain the old interval.
+    s.rangeFirst=tickAtSeconds(*s.song,s.settings,std::min(first,s.result->duration));
+    s.rangeLast=s.result->duration>0?tickAtSeconds(*s.song,s.settings,std::min(last,s.result->duration)):-1;
+    TimelineState after{*s.song,s.edits,s.rangeFirst,s.rangeLast};
+    s.history.resize(s.historyCursor);s.history.emplace_back(std::move(before),std::move(after));
+    if(s.history.size()>256)s.history.erase(s.history.begin());s.historyCursor=s.history.size();
+    pausePreview(true);refreshResult();position_=std::min(first,s.result->duration);roll_->setPlayhead(position_);refreshClock();
+    status_->setText(QString("已删除 %1 秒片段，后续音符与变速点已前移；保留区间位置，超出曲尾时收回，可撤销。").arg(last-first,0,'f',2));
+}
+void MainWindow::createRange(){
+    if(current_<0||busy_||timer_.isActive()||performance_->active()||roll_->isEditing())return;
+    auto& s=sessions_[current_];const auto [first,last]=selectedRange();
+    const int a=tickAtSeconds(*s.song,s.settings,first),b=tickAtSeconds(*s.song,s.settings,last);if(b<=a)return;
+    TimelineState before{*s.song,s.edits,s.rangeFirst,s.rangeLast},after=before;
+    try{insertBlankRange(after.song,after.edits,a,b);}catch(const std::exception& error){showWarning("无法创建空片段",QString::fromUtf8(error.what()));return;}
+    after.first=a;after.last=b;*s.song=after.song;s.edits=after.edits;s.rangeFirst=a;s.rangeLast=b;
+    s.history.resize(s.historyCursor);s.history.emplace_back(std::move(before),std::move(after));
+    if(s.history.size()>256)s.history.erase(s.history.begin());s.historyCursor=s.history.size();
+    recalculate();position_=first;roll_->setPlayhead(first,true);refreshClock();
+    status_->setText(QString("已插入 %1 秒空片段，后续音符已后移；绿色区间覆盖新空白，可撤销。").arg(last-first,0,'f',2));
 }
 void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
     if(!busy_&&e->mimeData()->hasUrls())for(const auto& u:e->mimeData()->urls())if(u.isLocalFile()){e->acceptProposedAction();break;}

@@ -2,7 +2,6 @@
 #include <QString>
 #include <QVariant>
 #include <vector>
-#include <functional>
 
 namespace rock {
 struct OutputChoice {
@@ -17,8 +16,4 @@ struct DiscoveryResult {
 };
 DiscoveryResult discoverKeyboards();
 DiscoveryResult discoverWindows();
-struct OutputDiscovery {
-    std::function<DiscoveryResult()> keyboards{discoverKeyboards};
-    std::function<DiscoveryResult()> windows{discoverWindows};
-};
 }

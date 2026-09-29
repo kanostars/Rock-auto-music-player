@@ -42,6 +42,7 @@ void HandpanMixer::prepare(const Song& song,const Conversion& result) {
     }
     seek(0);
 }
+void HandpanMixer::limitEnd(double seconds){endFrame_=std::min(endFrame_,frame(seconds));}
 void HandpanMixer::activate(const AudioEvent& event) {
     auto it=std::find(voices_.begin(),voices_.end(),nullptr);
     if(it==voices_.end())it=std::min_element(voices_.begin(),voices_.end(),[](const auto* a,const auto* b){return a->end<b->end;});

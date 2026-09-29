@@ -13,6 +13,7 @@ struct Note {
     // Session-only additions keep stable source IDs. An addition is inactive
     // when it has no NoteEdit (e.g. after undo); it never affects octave fitting.
     bool added{};
+    bool derived{}; // Split continuation: do not count twice in octave fitting.
 };
 struct Track { std::string name; int source{}, channel{}, count{}; };
 struct Tempo { int tick{}, micros{500000}; double seconds{}; };
@@ -35,10 +36,11 @@ struct Settings {
 struct NoteEdit {
     int startTick{}, endTick{}, target{-1};
     bool deleted{};
+    bool skipped{}; // Explicitly skip a conflicting note, retaining it in the score/report.
     bool operator==(const NoteEdit&) const = default;
 };
 using NoteEdits = std::map<int, NoteEdit>;
-enum class Mapping { Exact, Approximate, Skipped, Excluded, Edited, Deleted };
+enum class Mapping { Exact, Approximate, Skipped, Excluded, Edited, Deleted, ConflictSkipped };
 struct MappedNote {
     int source{}, target{-1};
     Mapping mapping{};
@@ -57,7 +59,12 @@ struct Conversion {
 Song parseMidi(const std::string& bytes, const std::atomic_bool* cancel = nullptr);
 Settings defaultSettings(const Song& song);
 Conversion convert(const Song& song, const Settings& settings, const NoteEdits& edits = {});
+NoteEdits resolveSameKeyConflicts(const Conversion& result,const Settings& settings,bool remove);
 int tickAtSeconds(const Song& song, const Settings& settings, double seconds);
 int nearestTarget(int pitch);
+double secondsAtTick(const Song&,const Settings&,int tick);
+void deleteTimeRange(Song&,NoteEdits&,int first,int last);
+void insertBlankRange(Song&,NoteEdits&,int first,int last);
+Conversion playbackRange(const Conversion&,double start,double end,const Settings&);
 std::string pitchName(int pitch);
 }

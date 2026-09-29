@@ -1,7 +1,6 @@
 #include "ui/main_window.h"
 #include <QApplication>
 #include <QFont>
-#include <QTimer>
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -11,10 +10,8 @@ int main(int argc, char* argv[]) {
     QApplication::setStyle("Fusion");
     QApplication::setFont(QFont("Microsoft YaHei UI", 10));
     rock::MainWindow window;
-    window.show();
-    if (QApplication::arguments().contains("--smoke-test"))
-        QTimer::singleShot(150, &app, &QApplication::quit);
-    else if (QApplication::arguments().size() > 1)
+    window.showMaximized();
+    if (QApplication::arguments().size() > 1)
         window.importFiles({QApplication::arguments().at(1)});
     return QApplication::exec();
 }

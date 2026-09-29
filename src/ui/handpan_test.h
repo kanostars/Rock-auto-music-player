@@ -3,14 +3,13 @@
 #include <QDialog>
 
 class QLabel;
+class QPlainTextEdit;
 namespace rock {
 class HandpanBoard : public QWidget {
     Q_OBJECT
 public:
     explicit HandpanBoard(QWidget* parent=nullptr);
     void setHighlighted(int target,bool value);
-    bool highlighted(int target) const{return target>=0&&target<9&&held_[target];}
-    QPoint padCenter(int target) const;
 signals:
     void padPressed(int target);
     void padReleased(int target);
@@ -26,11 +25,8 @@ private:
 class HandpanTestDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit HandpanTestDialog(QWidget* parent=nullptr,AudioBackend backend=AudioBackend::System);
+    explicit HandpanTestDialog(QWidget* parent=nullptr);
     ~HandpanTestDialog() override;
-    bool audioRunning() const{return audio_.running();}
-signals:
-    void noteTriggered(int target);
 protected:
     bool event(QEvent*) override;
     bool eventFilter(QObject*,QEvent*) override;
@@ -38,6 +34,7 @@ private:
     LiveHandpanPlayer audio_;
     HandpanBoard* board_{};
     QLabel* status_{};
+    QPlainTextEdit* log_{};
     std::array<bool,9> keyboardHeld_{},mouseHeld_{};
     bool active_{};
     bool acceptsInput() const;

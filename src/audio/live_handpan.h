@@ -20,7 +20,7 @@ private:
 };
 class LiveHandpanPlayer {
 public:
-    explicit LiveHandpanPlayer(AudioBackend backend=AudioBackend::System);
+    LiveHandpanPlayer();
     ~LiveHandpanPlayer();
     bool start(QString& error);
     bool strike(int target);

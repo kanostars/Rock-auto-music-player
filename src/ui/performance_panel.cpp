@@ -24,7 +24,7 @@ namespace rock {
 namespace {
 QLabel* text(const QString& value,const char* role){auto* w=new QLabel(value);w->setProperty("role",role);w->setTextFormat(Qt::PlainText);return w;}
 QPushButton* button(const QString& value,const char* name){auto* w=new QPushButton(value);w->setObjectName(name);w->setCursor(Qt::PointingHandCursor);return w;}
-enum class PlaylistIcon {Up,Down,Remove,Loop,Single,Shuffle};
+enum class PlaylistIcon {Up,Down,Remove,Loop,Single,Shuffle,Once};
 QIcon playlistIcon(PlaylistIcon kind){
     QIcon icon;
     for(bool disabled:{false,true}){
@@ -40,6 +40,9 @@ QIcon playlistIcon(PlaylistIcon kind){
             line(5,6,19,6);line(9,6,9,3);line(9,3,15,3);line(15,3,15,6);
             QPainterPath bin;bin.moveTo(7,9);bin.lineTo(8,21);bin.lineTo(16,21);bin.lineTo(17,9);p.drawPath(bin);
             line(10,10,10.5,17);line(14,10,13.5,17);
+        }else if(kind==PlaylistIcon::Once){
+            QPainterPath play;play.moveTo(5,4);play.lineTo(15,12);play.lineTo(5,20);play.closeSubpath();p.drawPath(play);
+            line(19,4,19,20);
         }else if(kind==PlaylistIcon::Shuffle){
             QPainterPath a;a.moveTo(3,6);a.cubicTo(11,6,12,18,20,18);p.drawPath(a);
             QPainterPath b;b.moveTo(3,18);b.cubicTo(11,18,12,6,20,6);p.drawPath(b);
@@ -58,8 +61,7 @@ QIcon playlistIcon(PlaylistIcon kind){
     return icon;
 }
 }
-PerformancePanel::PerformancePanel(QWidget* parent,OutputDiscovery discovery,AudioBackend backend,std::unique_ptr<KeyOutput> output)
-    :QWidget(parent),discovery_(std::move(discovery)),audioBackend_(backend),controller_(output?std::move(output):createKeyOutput()){
+PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent),controller_(createKeyOutput()){
     setObjectName("performancePanel");setStyleSheet("QWidget#performancePanel {background:white;}");
     auto* layout=new QVBoxLayout(this);layout->setContentsMargins(14,18,14,14);layout->setSpacing(12);
     auto* heading=new QHBoxLayout;heading->addWidget(text("演奏输出","section"));heading->addStretch();
@@ -104,7 +106,7 @@ PerformancePanel::PerformancePanel(QWidget* parent,OutputDiscovery discovery,Aud
     connect(moveUp_,&QPushButton::clicked,this,[this]{if(library_)emit songMoveRequested(library_->currentRow(),library_->currentRow()-1);});
     connect(moveDown_,&QPushButton::clicked,this,[this]{if(library_)emit songMoveRequested(library_->currentRow(),library_->currentRow()+1);});
     connect(removeSong_,&QPushButton::clicked,this,[this]{if(library_)emit songRemoveRequested(library_->currentRow());});
-    connect(playMode_,&QPushButton::clicked,this,[this]{playModeIndex_=(playModeIndex_+1)%3;updatePlayMode();resetQueue();});
+    connect(playMode_,&QPushButton::clicked,this,[this]{playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();});
     transportControls_=new QWidget(this);auto* transport=new QHBoxLayout(transportControls_);transport->setContentsMargins(0,0,0,0);transport->setSpacing(6);
     previousSong_=button("上一首","previousPerformanceSong");nextSong_=button("下一首","nextPerformanceSong");start_=button("开始演奏","startPerformanceButton");
     transport->addWidget(previousSong_);transport->addWidget(nextSong_);transport->addWidget(start_);
@@ -113,10 +115,10 @@ PerformancePanel::PerformancePanel(QWidget* parent,OutputDiscovery discovery,Aud
     timer_=new QTimer(this);timer_->setInterval(16);connect(timer_,&QTimer::timeout,this,&PerformancePanel::updatePerformance);updateControls();
 }
 void PerformancePanel::updatePlayMode(){
-    const QStringList names{"顺序播放","单曲循环","随机播放"};
-    const PlaylistIcon icons[]{PlaylistIcon::Loop,PlaylistIcon::Single,PlaylistIcon::Shuffle};
+    const QStringList names{"顺序播放","单曲循环","随机播放","单曲播放（结束后停止）"};
+    const PlaylistIcon icons[]{PlaylistIcon::Loop,PlaylistIcon::Single,PlaylistIcon::Shuffle,PlaylistIcon::Once};
     playMode_->setIcon(playlistIcon(icons[playModeIndex_]));playMode_->setAccessibleName(names[playModeIndex_]);
-    playMode_->setToolTip(names[playModeIndex_]+" · 点击切换为"+names[(playModeIndex_+1)%3]);
+    playMode_->setToolTip(names[playModeIndex_]+" · 试听与自动演奏共用\n点击切换为"+names[(playModeIndex_+1)%4]);
 }
 void PerformancePanel::setLibrary(QListWidget* library){
     library_=library;
@@ -132,6 +134,7 @@ void PerformancePanel::resetQueue(){
 int PerformancePanel::nextSong(bool natural){
     const int count=library_?library_->count():0,current=library_?library_->currentRow():-1;
     if(count==0||current<0)return -1;
+    if(natural&&playModeIndex_==3)return -1;
     if(natural&&playModeIndex_==1)return current;
     if(historyCursor_+1<static_cast<int>(songHistory_.size()))return songHistory_[++historyCursor_];
     int next=(current+1)%count;
@@ -157,20 +160,26 @@ void PerformancePanel::navigateSong(bool previous){
             songHistory_.insert(songHistory_.begin(),row);historyCursor_=0;}
     }else row=nextSong(false);
     const auto state=controller_.snapshot().state;
-    switchSong(row,state==PerformanceState::Playing||state==PerformanceState::Countdown);
+    switchSong(row,state==PerformanceState::Playing||state==PerformanceState::Countdown,previewPlaying_);
 }
-void PerformancePanel::switchSong(int row,bool continuePlaying){
+void PerformancePanel::previewFinished(){
+    if(running_||libraryBusy_)return;
+    const int row=nextSong(true);
+    if(row>=0)switchSong(row,false,true);
+}
+void PerformancePanel::switchSong(int row,bool continuePlaying,bool preview){
     if(libraryBusy_||!library_||!library_->model()||row<0||row>=library_->model()->rowCount()){queueActive_=false;return;}
     switchingSong_=true;stopPerformance();
     emit songChangeRequested(row); // The shared library owner selects the session synchronously.
-    setPreviewPosition(0);switchingSong_=false;
+    setPreviewPosition(rangeStart_);switchingSong_=false;
     queueActive_=continuePlaying;
     if(continuePlaying&&library_->currentIndex().row()==row&&song_&&result_)beginSong();
     else queueActive_=false;
+    if(preview&&library_->currentRow()==row&&song_&&result_)emit previewStartRequested();
 }
 void PerformancePanel::setSong(std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result,const QString&,const Settings& settings){
     stopPerformance();const bool changed=song_!=song;song_=std::move(song);result_=std::move(result);settings_=settings;
-    if(changed)position_=0;
+    if(changed){position_=0;rangeStart_=0;rangeEnd_=-1;}
     if(!song_||!result_){song_.reset();result_.reset();position_=0;state_->setText("曲目库为空，请导入 MIDI。");}
     else if(changed&&!switchingSong_)state_->setText("请刷新并选择输出键盘和目标窗口。");
     setPreviewPosition(position_);updateControls();
@@ -187,7 +196,7 @@ void PerformancePanel::refreshDevices(bool keyboard) {
     {const QSignalBlocker blocker(combo);combo->clear();combo->setCurrentIndex(-1);}
     combo->setToolTip({});combo->setEnabled(false);refresh->setEnabled(false);
     status->setStyleSheet("color:#8397a3;");status->setText(keyboard?"正在查找键盘…":"正在查找窗口…");
-    const auto query=keyboard?discovery_.keyboards:discovery_.windows;
+    const auto query=keyboard?discoverKeyboards:discoverWindows;
     // The worker owns its callable and never touches widgets, including after this page is closed.
     watcher.setFuture(QtConcurrent::run([query]{
         try{return query();}catch(...){return DiscoveryResult{{},"查找失败，请重试。"};}
@@ -216,7 +225,7 @@ void PerformancePanel::discoveryFinished(bool keyboard) {
 }
 void PerformancePanel::showKeyTestWindow() {
     if(!keyTestWindow_) {
-        keyTestWindow_=new HandpanTestDialog(this,audioBackend_);keyTestWindow_->setAttribute(Qt::WA_DeleteOnClose);
+        keyTestWindow_=new HandpanTestDialog(this);keyTestWindow_->setAttribute(Qt::WA_DeleteOnClose);
     }
     keyTestWindow_->show();keyTestWindow_->raise();keyTestWindow_->activateWindow();
 }
@@ -253,13 +262,13 @@ void PerformancePanel::updatePerformance(){
 void PerformancePanel::startPerformance(){
     if(running_){controller_.togglePause();updatePerformance();return;}
     resetQueue();queueActive_=true;
-    if(result_&&position_>=result_->duration)setPreviewPosition(0);
+    if(result_&&(position_<rangeStart_||position_>=(rangeEnd_<0?result_->duration:rangeEnd_)))setPreviewPosition(rangeStart_);
     beginSong();
 }
 void PerformancePanel::beginSong(){
     if(libraryBusy_||!song_||!result_||keyboards_->currentIndex()<0||windows_->currentIndex()<0){queueActive_=false;return;}
     QString error;
-    try{auto plan=makePerformancePlan(*result_,position_,settings_.holdMs,settings_.gapMs);
+    try{auto plan=makePerformancePlan(*result_,position_,settings_.holdMs,settings_.gapMs,rangeEnd_);
         countdown_->interpretText();plan.countdownSeconds=countdown_->value();
         OutputTarget target{keyboards_->currentData().toString(),windows_->currentData().toULongLong(),windows_->currentData(Qt::UserRole+1).toUInt()};
         // Finish local focus changes before handing the foreground to the target.
