@@ -29,8 +29,9 @@ bool PerformanceEngine::releaseAll(double now) {
     if(ok){held_=0;for(int i=0;i<9;++i)if(mask&(1<<i))lastRelease_[i]=now;}
     return ok;
 }
-void PerformanceEngine::fail(const QString& reason,double now){const bool clean=releaseAll(now);if(clean)output_->close();state_.state=PerformanceState::Failed;state_.message=reason+(clean?QString():"；松键失败，请手动松开 B/F/G/H/J/K/T/Y/U。");}
+void PerformanceEngine::fail(const QString& reason,double now){seeking_=false;const bool clean=releaseAll(now);if(clean)output_->close();state_.state=PerformanceState::Failed;state_.message=reason+(clean?QString():"；松键失败，请手动松开 B/F/G/H/J/K/T/Y/U。");}
 bool PerformanceEngine::start(PerformancePlan plan,const OutputTarget& target,bool activate,double now) {
+    seeking_=false;
     if(!releaseAll(now)){fail("无法释放上次演奏按键",now);return false;}
     if(plan.countdownSeconds<1){fail("开始倒计时最少为 1 秒。",now);return false;}
     QString error;if(!output_||!output_->prepare(target,error)){if(output_)output_->close();state_.state=PerformanceState::Failed;state_.message=error;return false;}
@@ -47,6 +48,7 @@ void PerformanceEngine::pause(double now,const QString& reason) {
     state_.state=PerformanceState::Paused;state_.message=reason;
 }
 void PerformanceEngine::togglePause(double now) {
+    if(seeking_){seekState_=PerformanceState::Paused;state_.message="定位后保持暂停 · Ctrl+Alt+Q 继续，Ctrl+Alt+E 终止";return;}
     if(state_.state==PerformanceState::Playing||state_.state==PerformanceState::Countdown){pause(now,"已暂停 · Ctrl+Alt+Q 继续，Ctrl+Alt+E 终止");}
     else if(state_.state==PerformanceState::Paused){
         if(output_->targetStatus()!=TargetStatus::Ready){state_.message="请先手动切换到目标窗口，再按 Ctrl+Alt+Q 继续。";return;}
@@ -54,7 +56,27 @@ void PerformanceEngine::togglePause(double now) {
         state_.state=pausedCountdown_?PerformanceState::Countdown:PerformanceState::Playing;state_.message="继续演奏";
     }
 }
-void PerformanceEngine::stop(){if(!output_)return;const bool clean=releaseAll(0);if(clean)output_->close();if(state_.active()||!clean){state_.state=clean?PerformanceState::Stopped:PerformanceState::Failed;state_.message=clean?"演奏已终止，已释放按键。":"松键失败，请手动松开 B/F/G/H/J/K/T/Y/U。";}}
+void PerformanceEngine::beginSeek(double now){
+    if(!state_.active()||seeking_)return;
+    seekState_=state_.state;
+    if(state_.state!=PerformanceState::Paused)pause(now,"正在定位，松开进度条后继续演奏。");
+    seeking_=state_.active();
+}
+void PerformanceEngine::seek(PerformancePlan plan,double now){
+    if(!seeking_||!state_.active())return;
+    if(!releaseAll(now)){fail("定位时松键失败",now);return;}
+    seeking_=false;plan_=std::move(plan);next_=0;releaseAt_.fill(0);
+    base_=state_.position=plan_.start;anchor_=now;
+    // Keep the physical release timestamps, even when rewinding the score.
+    // A new strike still waits for the configured release gap.
+    state_.countdown=remaining_;state_.message="已定位 · Ctrl+Alt+Q 继续，Ctrl+Alt+E 终止";
+    if(seekState_!=PerformanceState::Paused){
+        pausedCountdown_=seekState_==PerformanceState::Countdown;
+        togglePause(now);
+    }
+}
+void PerformanceEngine::cancelSeek(const QString& reason){seeking_=false;if(state_.state==PerformanceState::Paused)state_.message=reason;}
+void PerformanceEngine::stop(){seeking_=false;if(!output_)return;const bool clean=releaseAll(0);if(clean)output_->close();if(state_.active()||!clean){state_.state=clean?PerformanceState::Stopped:PerformanceState::Failed;state_.message=clean?"演奏已终止，已释放按键。":"松键失败，请手动松开 B/F/G/H/J/K/T/Y/U。";}}
 void PerformanceEngine::tick(double now) {
     if(!state_.active())return;
     const auto target=output_->targetStatus();

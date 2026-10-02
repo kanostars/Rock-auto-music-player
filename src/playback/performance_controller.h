@@ -11,6 +11,9 @@ public:
     ~PerformanceController();
     bool start(PerformancePlan,const OutputTarget&,bool activate,QString& error);
     void togglePause();
+    void beginSeek();
+    void seek(PerformancePlan);
+    void cancelSeek(const QString& reason="定位已取消，演奏保持暂停。");
     void stop();
     PerformanceSnapshot snapshot();
     bool nativeEventFilter(const QByteArray&,void*,qintptr*) override;

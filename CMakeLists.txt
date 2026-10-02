@@ -33,6 +33,7 @@ add_library(rock_audio src/audio/handpan_mixer.cpp src/audio/audio_player.cpp sr
 set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
+    src/ui/mini_player.cpp src/ui/mini_player.h src/ui/playback_icons.cpp
     src/playback/performance_engine.cpp src/playback/performance_controller.cpp src/platform/key_output.cpp
     src/ui/performance_panel.cpp src/ui/performance_panel.h
     src/ui/handpan_test.cpp src/ui/handpan_test.h

@@ -4,6 +4,9 @@
 #include <QPainter>
 #include <QStyle>
 #include "performance_panel.h"
+#include "mini_player.h"
+#include <QApplication>
+#include <QSettings>
 #include "range_spinbox.h"
 #include <QCloseEvent>
 #include <QComboBox>
@@ -54,6 +57,8 @@ QString noteName(int p) {return QString::fromStdString(pitchName(p));}
 MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
     setWindowTitle("RockAutoMusicPlay · 九键音乐工作台");resize(1460,900);setMinimumSize(1120,740);setAcceptDrops(true);
     buildUi();
+    miniPerformance_=QSettings().value("miniPlayer/performance",true).toBool();
+    miniRefresh_.setInterval(80);connect(&miniRefresh_,&QTimer::timeout,this,&MainWindow::syncMiniPlayer);
     connect(&importWatcher_,&QFutureWatcher<std::vector<Loaded>>::finished,this,[this] {
         auto loaded=importWatcher_.result();
         busy_=false;performance_->setLibraryBusy(false);import_->setEnabled(true);workspace_->setEnabled(true);editorPanel_->setEnabled(true);progress_->hide();cancelButton_->hide();updateEditActions();
@@ -65,6 +70,7 @@ MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
             const auto& session=sessions_.back();
             auto* row=new QListWidgetItem(QFileInfo(session.path).completeBaseName()+"\n"+QString("%1 音符 · %2 个音轨").arg(session.song->notes.size()).arg(session.song->tracks.size()));
             row->setToolTip(session.path);row->setSizeHint(QSize(180,66));library_->addItem(row);last=library_->count()-1;
+            row->setData(Qt::UserRole,session.result->duration);
         }
         if(last>=0) library_->setCurrentRow(last);
         if(!errors.isEmpty()) {status_->setText("导入失败："+errors.join("；"));status_->setToolTip(errors.join('\n'));}
@@ -79,7 +85,7 @@ MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
         else if(!audio_.running()){pausePreview();status_->setText("音频输出已中断，请检查系统默认输出设备后重新试听。");}
     });
 }
-MainWindow::~MainWindow() {audio_.pause();if(cancel_)cancel_->store(true);importWatcher_.waitForFinished();}
+MainWindow::~MainWindow() {miniRefresh_.stop();delete mini_;audio_.pause();if(cancel_)cancel_->store(true);importWatcher_.waitForFinished();}
 const Conversion* MainWindow::currentResult() const {return current_>=0?sessions_[current_].result.get():nullptr;}
 
 void MainWindow::buildUi() {
@@ -128,7 +134,11 @@ void MainWindow::buildUi() {
     auto* root=new QWidget;root->setObjectName("root");setCentralWidget(root);
     auto* outer=new QVBoxLayout(root);outerLayout_=outer;outer->setContentsMargins(22,20,22,14);outer->setSpacing(14);
     auto* header=new QFrame;header->setObjectName("header");auto* top=new QHBoxLayout(header);top->setContentsMargins(22,17,22,17);
-    auto* brandBox=new QVBoxLayout;brandBox->setSpacing(5);brandBox->addWidget(label("ROCK  /  九键音乐工作台","brand"));
+    auto* brandBox=new QVBoxLayout;brandBox->setSpacing(5);
+    auto* logo=button("ROCK  /  九键音乐工作台","miniPlayerButton");
+    logo->setStyleSheet("QPushButton {background:transparent;border:none;padding:0;text-align:left;font-size:22px;font-weight:700;color:#183d4d;} QPushButton:hover {color:#178e80;}");
+    logo->setToolTip("点击 Logo 进入小窗模式");logo->setAccessibleName("Logo · 进入小窗模式");brandBox->addWidget(logo,0,Qt::AlignLeft);
+    connect(logo,&QPushButton::clicked,this,&MainWindow::openMiniPlayer);
     brandBox->addWidget(label("MIDI → NINE KEYS     ·     让每个音符找到它的位置","muted"));top->addLayout(brandBox);top->addStretch();
     import_=button("＋  导入 MIDI","importButton");import_->setMinimumWidth(154);top->addWidget(import_);outer->addWidget(header);
     connect(import_,&QPushButton::clicked,this,[this]{importFiles(QFileDialog::getOpenFileNames(this,"选择 MIDI 文件",{},"MIDI 文件 (*.mid *.midi)"));});
@@ -279,7 +289,7 @@ void MainWindow::buildUi() {
     clock_=label("00:00.00 / 00:00.00","section");clock_->setObjectName("previewClock");tl->addSpacing(16);tl->addWidget(clock_);
     tl->addWidget(performance_->transportControls());performance_->transportControls()->show();
     tl->addStretch();summary_=label("等待导入","muted");
-    tl->addWidget(label("音量","muted"));auto* volume=new QSlider(Qt::Horizontal);volume->setObjectName("volumeSlider");volume->setRange(0,100);volume->setValue(60);volume->setFixedWidth(70);volume->setToolTip("试听音量 60%（0 为静音）");tl->addWidget(volume);
+    tl->addWidget(label("音量","muted"));auto* volume=new QSlider(Qt::Horizontal);volume_=volume;volume->setObjectName("volumeSlider");volume->setRange(0,100);volume->setValue(60);volume->setFixedWidth(70);volume->setToolTip("试听音量 60%（0 为静音）");tl->addWidget(volume);
     connect(volume,&QSlider::valueChanged,this,[this,volume](int value){audio_.setVolume(value/100.f);volume->setToolTip(QString("试听音量 %1%（0 为静音）").arg(value));});
     auto* diagnostics=button("转换报告","reportButton");tl->addWidget(diagnostics);outer->addWidget(transport);
     connect(diagnostics,&QPushButton::clicked,this,&MainWindow::showDiagnostics);
@@ -300,13 +310,7 @@ void MainWindow::buildUi() {
         // Publish the shared position without feeding it back into the output controller.
         clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
     });
-    connect(performance_,&PerformancePanel::startRequested,this,[this]{
-        if(!performance_->active()){
-            pausePreview();if(current_<0||!validateParameters())return;
-            if(settingsPending_)applySettings();
-        }
-        performance_->startPerformance();
-    });
+    connect(performance_,&PerformancePanel::startRequested,this,&MainWindow::togglePerformance);
     connect(performance_,&PerformancePanel::activeChanged,this,[this,settings,all,none](bool active){
         settings->setEnabled(!active);tracks_->setEnabled(!active);all->setEnabled(!active);none->setEnabled(!active);
         roll_->setEditingEnabled(!active&&!timer_.isActive());if(active){addNote_->setChecked(false);deleteMode_->setChecked(false);}
@@ -314,6 +318,107 @@ void MainWindow::buildUi() {
     });
     connect(performance_,&PerformancePanel::statusChanged,status_,&QLabel::setText);
 
+}
+
+void MainWindow::togglePerformance(){
+    if(busy_)return;
+    if(!performance_->active()){
+        pausePreview();if(current_<0||!validateParameters())return;
+        if(!performance_->outputReady()){
+            if(mini_&&mini_->isVisible())restoreMainWindow();
+            tabs_->setCurrentIndex(2);status_->setText("请先刷新并选择输出键盘和目标窗口，再开始演奏。");return;
+        }
+        if(settingsPending_)applySettings();
+    }
+    miniPerformance_=true;performance_->startPerformance();syncMiniPlayer();
+}
+void MainWindow::openMiniPlayer(){
+    if(busy_||roll_->isEditing()||QApplication::activeModalWidget())return;
+    if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
+    if(!mini_){
+        mini_=new MiniPlayer(library_);
+        connect(mini_,&MiniPlayer::restoreRequested,this,&MainWindow::restoreMainWindow);
+        connect(mini_,&MiniPlayer::quitRequested,this,&MainWindow::quitFromMiniPlayer);
+        connect(mini_,&MiniPlayer::sourceRequested,this,[this](bool output){
+            if(busy_||miniPerformance_==output){syncMiniPlayer();return;}
+            pausePreview();performance_->stopPerformance();miniPerformance_=output;QSettings().setValue("miniPlayer/performance",output);syncMiniPlayer();
+        });
+        connect(mini_,&MiniPlayer::playRequested,this,[this]{if(miniPerformance_)togglePerformance();else togglePlayback();syncMiniPlayer();});
+        connect(mini_,&MiniPlayer::navigateRequested,performance_,&PerformancePanel::navigateSong);
+        connect(mini_,&MiniPlayer::modeRequested,performance_,&PerformancePanel::cyclePlayMode);
+        connect(mini_,&MiniPlayer::moveRequested,this,&MainWindow::moveSong);
+        connect(mini_,&MiniPlayer::removeRequested,this,&MainWindow::removeSong);
+        connect(mini_,&MiniPlayer::songPlayRequested,this,[this](int row){
+            if(busy_||row<0||row>=static_cast<int>(sessions_.size()))return;
+            performance_->stopPerformance();pausePreview();
+            library_->setCurrentRow(row);miniSeekResume_=false;miniSeekSong_.reset();
+            position_=selectedRange().first;roll_->setPlayhead(position_);refreshClock();
+            if(miniPerformance_)togglePerformance();else startPreview();
+            syncMiniPlayer();
+        });
+        connect(mini_,&MiniPlayer::volumeRequested,volume_,&QSlider::setValue);
+        connect(mini_,&MiniPlayer::seekStarted,this,[this]{
+            miniSeekResume_=false;miniSeekSong_.reset();
+            if(busy_||current_<0)return;
+            miniSeekPerformance_=miniPerformance_;miniSeekSong_=sessions_[current_].song;
+            if(miniSeekPerformance_)performance_->beginSeek();
+            else {miniSeekResume_=timer_.isActive();pausePreview();}
+        });
+        connect(mini_,&MiniPlayer::seekRequested,this,[this](double seconds){
+            const bool sameSong=current_>=0&&miniSeekSong_==sessions_[current_].song;
+            const bool resume=miniSeekResume_&&sameSong;
+            miniSeekResume_=false;miniSeekSong_.reset();
+            if(!sameSong||miniSeekPerformance_!=miniPerformance_)return;
+            if(busy_||!currentResult()||!std::isfinite(seconds))return;
+            if(miniSeekPerformance_){
+                if(performance_->active())performance_->seekPerformance(seconds);
+                else {const auto [first,last]=selectedRange();position_=std::clamp(seconds,first,last);roll_->setPlayhead(position_);refreshClock();}
+                syncMiniPlayer();return;
+            }
+            if(performance_->active())return;
+            pausePreview();position_=std::clamp(seconds,0.0,currentResult()->duration);roll_->setPlayhead(position_);refreshClock();
+            if(resume)startPreview();syncMiniPlayer();
+        });
+    }
+    if(performance_->active())miniPerformance_=true;else if(timer_.isActive())miniPerformance_=false;
+    mini_->present(screen());syncMiniPlayer();miniRefresh_.start();hide();
+}
+void MainWindow::restoreMainWindow(){
+    miniRefresh_.stop();show();raise();activateWindow();if(mini_)mini_->hide();
+}
+void MainWindow::syncMiniPlayer(){
+    if(!mini_||!mini_->isVisible())return;
+    if(performance_->active())miniPerformance_=true;else if(timer_.isActive())miniPerformance_=false;
+    MiniPlayerState s;s.title=current_>=0?QFileInfo(sessions_[current_].path).completeBaseName():"尚无曲目";
+    s.performance=miniPerformance_;s.position=position_;s.duration=currentResult()?currentResult()->duration:0;s.busy=busy_;s.volume=volume_->value();
+    std::tie(s.rangeFirst,s.rangeLast)=selectedRange();s.mode=performance_->playMode();s.modeEnabled=!performance_->active();s.seekEnabled=current_>=0;
+    s.detail=status_->text();s.canPlay=current_>=0&&(miniPerformance_||play_->isEnabled());
+    if(miniPerformance_){
+        const auto snapshot=performance_->snapshot();s.playing=performance_->active()&&(snapshot.state==PerformanceState::Playing||snapshot.state==PerformanceState::Countdown);
+        QString state="待演奏";
+        switch(snapshot.state){
+        case PerformanceState::Countdown:state=QString("倒计时 %1 秒").arg(static_cast<int>(std::ceil(snapshot.countdown)));break;
+        case PerformanceState::Playing:state="演奏中";break;
+        case PerformanceState::Paused:state="已暂停";break;
+        case PerformanceState::Finished:state="已完成";break;
+        case PerformanceState::Stopped:state="已终止";break;
+        case PerformanceState::Failed:state="输出失败";break;
+        default:break;
+        }
+        if(!performance_->active()&&!performance_->outputReady())state="待设置输出";
+        s.status="自动演奏 · "+state;s.detail=performance_->statusText();
+    }else{s.playing=timer_.isActive();s.status=s.playing?"本地试听 · 播放中":"本地试听 · 已暂停";}
+    if(current_<0)s.status="返回主窗口导入 MIDI";if(busy_)s.status="正在导入…";mini_->setState(s);
+}
+void MainWindow::quitFromMiniPlayer(){
+    if(mini_)if(auto* existing=mini_->findChild<QMessageBox*>("miniExitPrompt")){existing->raise();return;}
+    performance_->stopPerformance();pausePreview();syncMiniPlayer();
+    const bool edited=std::any_of(sessions_.begin(),sessions_.end(),[](const Session& s){return !s.edits.empty()||s.historyCursor>0;});
+    if(!edited){close();QApplication::quit();return;}
+    auto* box=new QMessageBox(QMessageBox::Question,"退出整个程序","当前会话的音符编辑不会自动保存。请确认需要的曲目已导出 MIDI，再退出程序。",QMessageBox::Yes|QMessageBox::Cancel,mini_);
+    box->setObjectName("miniExitPrompt");box->setAttribute(Qt::WA_DeleteOnClose);box->setDefaultButton(QMessageBox::Cancel);
+    box->button(QMessageBox::Yes)->setText("退出程序");box->button(QMessageBox::Cancel)->setText("取消");
+    connect(box,&QMessageBox::finished,this,[this](int result){if(result==QMessageBox::Yes){close();QApplication::quit();}});box->open();
 }
 
 void MainWindow::openTrackWindow() {
@@ -363,6 +468,7 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
 }
 void MainWindow::closeEvent(QCloseEvent* event) {
     performance_->stopPerformance();
+    miniRefresh_.stop();audio_.pause();timer_.stop();if(mini_)mini_->hide();
     if(trackWindow_)trackWindow_->close();
     QMainWindow::closeEvent(event);
 }
@@ -436,7 +542,7 @@ void MainWindow::promptImportConflicts(int firstImported){
     box->open();
 }
 void MainWindow::selectSong(int index) {
-    if(index<0||index>=static_cast<int>(sessions_.size()))return;
+    if(busy_||index<0||index>=static_cast<int>(sessions_.size()))return;
     performance_->stopPerformance();
     pausePreview(true);current_=index;updating_=true;deleteMode_->setChecked(false);addNote_->setChecked(false);
     const auto& s=sessions_[index];const auto& settings=s.settings;
@@ -491,6 +597,7 @@ void MainWindow::clearSong(){
 }
 void MainWindow::markDirty() {if(!updating_&&current_>=0){settingsPending_=true;dirty_->setText("有未应用设置 · 点击下方应用");}}
 void MainWindow::showWarning(const QString& title,const QString& message) {
+    if(mini_&&mini_->isVisible())restoreMainWindow();
     status_->setText(message.section('\n',0,0));
     if(auto* existing=findChild<QMessageBox*>("validationWarning");existing&&existing->isVisible()){existing->raise();return;}
     auto* box=new QMessageBox(QMessageBox::Warning,title,message,QMessageBox::Ok,roll_->window());
@@ -516,6 +623,7 @@ void MainWindow::recalculate(bool fit) {
 }
 void MainWindow::refreshResult(bool fit) {
     const auto& s=sessions_[current_];const auto& r=*s.result;
+    if(auto* item=library_->item(current_))item->setData(Qt::UserRole,r.duration);
     const QSignalBlocker positionBlocker(performance_);
     performance_->setSong(s.song,s.result,s.path,s.settings);
     std::vector<int> added(s.song->tracks.size());int originalCount=0,addedCount=0;
@@ -557,6 +665,7 @@ void MainWindow::setAllTracks(bool enabled) {
     updating_=false;recalculate();
 }
 void MainWindow::togglePlayback() {
+    if(busy_)return;
     if(performance_->active())performance_->stopPerformance();
     if(timer_.isActive()){pausePreview();return;}
     startPreview();

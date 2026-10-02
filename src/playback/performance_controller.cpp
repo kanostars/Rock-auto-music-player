@@ -32,6 +32,9 @@ bool PerformanceController::start(PerformancePlan plan,const OutputTarget& targe
 #endif
 }
 void PerformanceController::togglePause(){std::lock_guard lock(mutex_);engine_.togglePause(now());}
+void PerformanceController::beginSeek(){std::lock_guard lock(mutex_);engine_.beginSeek(now());}
+void PerformanceController::seek(PerformancePlan plan){std::lock_guard lock(mutex_);engine_.seek(std::move(plan),now());}
+void PerformanceController::cancelSeek(const QString& reason){std::lock_guard lock(mutex_);engine_.cancelSeek(reason);}
 void PerformanceController::stop(){if(worker_.joinable()){worker_.request_stop();worker_.join();}{std::lock_guard lock(mutex_);engine_.stop();}unregisterHotkeys();}
 PerformanceSnapshot PerformanceController::snapshot(){std::lock_guard lock(mutex_);auto s=engine_.snapshot();if(!s.active())unregisterHotkeys();return s;}
 bool PerformanceController::nativeEventFilter(const QByteArray&,void* message,qintptr* result){

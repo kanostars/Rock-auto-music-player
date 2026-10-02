@@ -10,9 +10,11 @@
 class QLabel; class QPushButton; class QComboBox; class QDoubleSpinBox;
 class QSpinBox; class QListWidget; class QTreeWidget; class QTabWidget;
 class QProgressBar; class QSplitter; class QVBoxLayout;
+class QSlider;
 namespace rock {
 class PianoRoll;
 class PerformancePanel;
+class MiniPlayer;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -59,6 +61,8 @@ private:
     QList<int> workspaceSizes_;
     QPushButton* expandTrack_{};
     PerformancePanel* performance_{};
+    MiniPlayer* mini_{};QTimer miniRefresh_;bool miniPerformance_{true};
+    bool miniSeekResume_{},miniSeekPerformance_{};std::shared_ptr<Song> miniSeekSong_;
     QTabWidget* tabs_{};
     QLabel *songTitle_{},*subtitle_{},*status_{},*details_{},*clock_{},*dirty_{},*summary_{},*zoomText_{};
     QComboBox *strategy_{},*tempoMode_{},*filter_{},*octaveMode_{};
@@ -69,8 +73,14 @@ private:
     QPushButton *addNote_{},*deleteNote_{},*deleteMode_{},*undo_{},*redo_{};
     QProgressBar* progress_{};
     AudioPlayer audio_;
+    QSlider* volume_{};
     QTimer timer_; double position_{};
     void buildUi();
+    void openMiniPlayer();
+    void restoreMainWindow();
+    void syncMiniPlayer();
+    void togglePerformance();
+    void quitFromMiniPlayer();
     void openTrackWindow();
     void restoreTrackPanel();
     void selectSong(int index);

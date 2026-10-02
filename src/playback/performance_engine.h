@@ -34,6 +34,9 @@ public:
     bool start(PerformancePlan,const OutputTarget&,bool activate,double now);
     void tick(double now);
     void togglePause(double now);
+    void beginSeek(double now);
+    void seek(PerformancePlan,double now);
+    void cancelSeek(const QString& reason);
     void stop();
     PerformanceSnapshot snapshot() const{return state_;}
 private:
@@ -41,6 +44,7 @@ private:
     size_t next_{};uint16_t held_{};
     std::array<double,9> releaseAt_{},lastRelease_{};
     double anchor_{},base_{},deadline_{},remaining_{};bool pausedCountdown_{};
+    bool seeking_{};PerformanceState seekState_{PerformanceState::Paused};
     bool releaseAll(double now);
     void pause(double now,const QString& reason);
     void fail(const QString& reason,double now);

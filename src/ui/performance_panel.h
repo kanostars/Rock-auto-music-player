@@ -1,7 +1,6 @@
 #pragma once
 #include "core/music.h"
 #include "platform/output_discovery.h"
-#include "audio/audio_player.h"
 #include "playback/performance_controller.h"
 #include <QFutureWatcher>
 #include <QPointer>
@@ -17,7 +16,15 @@ public:
     ~PerformancePanel() override;
     void stopPerformance();
     void startPerformance();
+    void beginSeek();
+    void seekPerformance(double seconds);
     bool active() const{return running_;}
+    bool outputReady() const;
+    QString statusText() const;
+    PerformanceSnapshot snapshot() const{return snapshot_;}
+    int playMode() const{return playModeIndex_;}
+    void cyclePlayMode();
+    void navigateSong(bool previous);
     void setSong(std::shared_ptr<const Song>,std::shared_ptr<const Conversion>,const QString& path,const Settings&);
     void setPreviewPosition(double seconds);
     void setPlaybackRange(double first,double last){rangeStart_=first;rangeEnd_=last;}
@@ -53,8 +60,9 @@ private:
     double rangeStart_{},rangeEnd_{-1};
     QWidget *playlistControls_{},*transportControls_{};
     bool running_{},libraryBusy_{},switchingSong_{},queueActive_{},previewPlaying_{};
+    PerformanceSnapshot snapshot_;
     std::vector<int> randomRemaining_,songHistory_;int historyCursor_{-1};
-    void resetQueue();int nextSong(bool natural);void navigateSong(bool previous);void switchSong(int row,bool continuePlaying,bool preview=false);
+    void resetQueue();int nextSong(bool natural);void switchSong(int row,bool continuePlaying,bool preview=false);
     void beginSong();void updateControls();void updatePerformance();void refreshDevices(bool);void discoveryFinished(bool);void showKeyTestWindow();
 };
 }

@@ -1,6 +1,6 @@
 #include "performance_panel.h"
+#include "playback_icons.h"
 #include "handpan_test.h"
-#include "platform/key_output.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -8,9 +8,6 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
-#include <QPainter>
-#include <QPainterPath>
-#include <QIcon>
 #include <QRandomGenerator>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -24,44 +21,9 @@ namespace rock {
 namespace {
 QLabel* text(const QString& value,const char* role){auto* w=new QLabel(value);w->setProperty("role",role);w->setTextFormat(Qt::PlainText);return w;}
 QPushButton* button(const QString& value,const char* name){auto* w=new QPushButton(value);w->setObjectName(name);w->setCursor(Qt::PointingHandCursor);return w;}
-enum class PlaylistIcon {Up,Down,Remove,Loop,Single,Shuffle,Once};
-QIcon playlistIcon(PlaylistIcon kind){
-    QIcon icon;
-    for(bool disabled:{false,true}){
-        QPixmap pixmap(48,48);pixmap.setDevicePixelRatio(2);pixmap.fill(Qt::transparent);
-        QPainter p(&pixmap);p.setRenderHint(QPainter::Antialiasing);
-        const bool mode=kind>=PlaylistIcon::Loop;
-        p.setPen(QPen(QColor(disabled?"#afbdc5":mode?"#178e80":"#526c7c"),1.8,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
-        auto line=[&](qreal x1,qreal y1,qreal x2,qreal y2){p.drawLine(QPointF(x1,y1),QPointF(x2,y2));};
-        if(kind==PlaylistIcon::Up||kind==PlaylistIcon::Down){
-            const bool up=kind==PlaylistIcon::Up;line(12,5,12,19);
-            line(6,up?11:13,12,up?5:19);line(12,up?5:19,18,up?11:13);
-        }else if(kind==PlaylistIcon::Remove){
-            line(5,6,19,6);line(9,6,9,3);line(9,3,15,3);line(15,3,15,6);
-            QPainterPath bin;bin.moveTo(7,9);bin.lineTo(8,21);bin.lineTo(16,21);bin.lineTo(17,9);p.drawPath(bin);
-            line(10,10,10.5,17);line(14,10,13.5,17);
-        }else if(kind==PlaylistIcon::Once){
-            QPainterPath play;play.moveTo(5,4);play.lineTo(15,12);play.lineTo(5,20);play.closeSubpath();p.drawPath(play);
-            line(19,4,19,20);
-        }else if(kind==PlaylistIcon::Shuffle){
-            QPainterPath a;a.moveTo(3,6);a.cubicTo(11,6,12,18,20,18);p.drawPath(a);
-            QPainterPath b;b.moveTo(3,18);b.cubicTo(11,18,12,6,20,6);p.drawPath(b);
-            line(17,3,20,6);line(20,6,17,9);line(17,15,20,18);line(20,18,17,21);
-        }else{
-            QPainterPath top;top.moveTo(4,10);top.lineTo(4,8);top.quadTo(4,5,7,5);top.lineTo(20,5);p.drawPath(top);
-            line(17,2,20,5);line(20,5,17,8);
-            QPainterPath bottom;bottom.moveTo(20,14);bottom.lineTo(20,16);bottom.quadTo(20,19,17,19);bottom.lineTo(4,19);p.drawPath(bottom);
-            line(7,16,4,19);line(4,19,7,22);
-            if(kind==PlaylistIcon::Single){
-                QFont font=p.font();font.setPixelSize(10);font.setBold(true);p.setFont(font);p.drawText(QRectF(8,6,8,12),Qt::AlignCenter,"1");
-            }else{for(int y:{10,13})line(9,y,15,y);}
-        }
-        p.end();icon.addPixmap(pixmap,disabled?QIcon::Disabled:QIcon::Normal);
-    }
-    return icon;
+
 }
-}
-PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent),controller_(createKeyOutput()){
+PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
     setObjectName("performancePanel");setStyleSheet("QWidget#performancePanel {background:white;}");
     auto* layout=new QVBoxLayout(this);layout->setContentsMargins(14,18,14,14);layout->setSpacing(12);
     auto* heading=new QHBoxLayout;heading->addWidget(text("演奏输出","section"));heading->addStretch();
@@ -106,7 +68,7 @@ PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent),controller_(
     connect(moveUp_,&QPushButton::clicked,this,[this]{if(library_)emit songMoveRequested(library_->currentRow(),library_->currentRow()-1);});
     connect(moveDown_,&QPushButton::clicked,this,[this]{if(library_)emit songMoveRequested(library_->currentRow(),library_->currentRow()+1);});
     connect(removeSong_,&QPushButton::clicked,this,[this]{if(library_)emit songRemoveRequested(library_->currentRow());});
-    connect(playMode_,&QPushButton::clicked,this,[this]{playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();});
+    connect(playMode_,&QPushButton::clicked,this,&PerformancePanel::cyclePlayMode);
     transportControls_=new QWidget(this);auto* transport=new QHBoxLayout(transportControls_);transport->setContentsMargins(0,0,0,0);transport->setSpacing(6);
     previousSong_=button("上一首","previousPerformanceSong");nextSong_=button("下一首","nextPerformanceSong");start_=button("开始演奏","startPerformanceButton");
     transport->addWidget(previousSong_);transport->addWidget(nextSong_);transport->addWidget(start_);
@@ -120,6 +82,9 @@ void PerformancePanel::updatePlayMode(){
     playMode_->setIcon(playlistIcon(icons[playModeIndex_]));playMode_->setAccessibleName(names[playModeIndex_]);
     playMode_->setToolTip(names[playModeIndex_]+" · 试听与自动演奏共用\n点击切换为"+names[(playModeIndex_+1)%4]);
 }
+void PerformancePanel::cyclePlayMode(){if(running_||libraryBusy_)return;playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();}
+bool PerformancePanel::outputReady() const{return keyboards_->currentIndex()>=0&&windows_->currentIndex()>=0;}
+QString PerformancePanel::statusText() const{return state_->text();}
 void PerformancePanel::setLibrary(QListWidget* library){
     library_=library;
     connect(library_,&QListWidget::currentRowChanged,this,[this]{updateControls();});
@@ -246,7 +211,7 @@ void PerformancePanel::updateControls(){
     if(libraryBusy_)start_->setEnabled(false);
 }
 void PerformancePanel::updatePerformance(){
-    const auto s=controller_.snapshot();const bool wasRunning=running_;running_=s.active();
+    const auto s=controller_.snapshot();snapshot_=s;const bool wasRunning=running_;running_=s.active();
     if(wasRunning||running_)setPreviewPosition(s.position);
     if(!s.message.isEmpty())state_->setText(s.state==PerformanceState::Countdown?QString("倒计时 %1 秒 · %2").arg(static_cast<int>(std::ceil(s.countdown))).arg(s.message):s.message);
     state_->setStyleSheet(s.state==PerformanceState::Failed?"color:#bd4f5b;":"color:#178e80;");
@@ -265,6 +230,22 @@ void PerformancePanel::startPerformance(){
     if(result_&&(position_<rangeStart_||position_>=(rangeEnd_<0?result_->duration:rangeEnd_)))setPreviewPosition(rangeStart_);
     beginSong();
 }
+void PerformancePanel::beginSeek(){if(running_){controller_.beginSeek();updatePerformance();}}
+void PerformancePanel::seekPerformance(double seconds){
+    if(!running_||libraryBusy_||!result_||!std::isfinite(seconds))return;
+    const double end=rangeEnd_<0?result_->duration:std::min(rangeEnd_,result_->duration);
+    if(end<=rangeStart_){controller_.cancelSeek();return;}
+    const double position=std::clamp(seconds,rangeStart_,end);
+    try{
+        // The new plan includes earlier strikes when rewinding. At the exact
+        // range end, use an empty tail and let the engine finish naturally.
+        auto plan=makePerformancePlan(*result_,std::min(position,std::nextafter(end,rangeStart_)),settings_.holdMs,settings_.gapMs,end);
+        plan.start=position;controller_.seek(std::move(plan));updatePerformance();
+    }catch(const std::exception& e){
+        controller_.cancelSeek(QString::fromUtf8(e.what()));updatePerformance();
+        state_->setStyleSheet("color:#bd4f5b;");
+    }
+}
 void PerformancePanel::beginSong(){
     if(libraryBusy_||!song_||!result_||keyboards_->currentIndex()<0||windows_->currentIndex()<0){queueActive_=false;return;}
     QString error;
@@ -276,6 +257,7 @@ void PerformancePanel::beginSong(){
         if(controller_.start(std::move(plan),target,activate_->isChecked(),error)){timer_->start();updatePerformance();return;}
     }catch(const std::exception& e){error=QString::fromUtf8(e.what());}
     queueActive_=false;running_=false;updateControls();emit activeChanged(false);
+    snapshot_.state=PerformanceState::Failed;snapshot_.message=error;
     state_->setText(error);state_->setStyleSheet("color:#bd4f5b;");emit statusChanged(error);
 }
 }
