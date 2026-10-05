@@ -1,4 +1,5 @@
 #include "handpan_test.h"
+#include "theme.h"
 #include <QApplication>
 #include <QDateTime>
 #include <QKeyEvent>
@@ -73,19 +74,19 @@ void HandpanBoard::mouseReleaseEvent(QMouseEvent* event) {
 }
 HandpanTestDialog::HandpanTestDialog(QWidget* parent):QDialog(parent) {
     setObjectName("keyTestWindow");setWindowTitle("九键手碟测试");resize(730,700);setMinimumSize(730,700);
-    setStyleSheet("QDialog#keyTestWindow {background:#eef3f5;} QLabel {background:transparent; color:#203d4e; font-family:'Microsoft YaHei UI';}");
+    Theme::setStyle(this,"QDialog#keyTestWindow {background:#eef3f5;} QLabel {background:transparent; color:#203d4e; font-family:'Microsoft YaHei UI';}");
     auto* layout=new QVBoxLayout(this);layout->setContentsMargins(18,16,18,14);layout->setSpacing(9);
     board_=new HandpanBoard;layout->addWidget(board_);status_=new QLabel("已暂停 · 请点击此窗口以启用试听");status_->setObjectName("handpanTestStatus");layout->addWidget(status_);
     auto* logHeader=new QHBoxLayout;
-    auto* logTitle=new QLabel("按键日志");logTitle->setStyleSheet("font-size:14px;font-weight:700;");logHeader->addWidget(logTitle);
-    auto* logHint=new QLabel("本窗口触发时间（毫秒） · 最近 1000 条");logHint->setStyleSheet("font-size:12px;color:#627c8a;");logHeader->addWidget(logHint);logHeader->addStretch();
+    auto* logTitle=new QLabel("按键日志");Theme::setStyle(logTitle,"font-size:14px;font-weight:700;");logHeader->addWidget(logTitle);
+    auto* logHint=new QLabel("本窗口触发时间（毫秒） · 最近 1000 条");Theme::setStyle(logHint,"font-size:12px;color:#627c8a;");logHeader->addWidget(logHint);logHeader->addStretch();
     auto* clearLog=new QPushButton("清空日志");clearLog->setObjectName("clearHandpanLog");clearLog->setAutoDefault(false);clearLog->setFocusPolicy(Qt::NoFocus);
-    clearLog->setCursor(Qt::PointingHandCursor);clearLog->setStyleSheet("QPushButton {background:#ffffff;color:#203d4e;border:1px solid #d9e4e9;border-radius:6px;padding:5px 12px;} QPushButton:hover {background:#e5f3ef;}");
+    clearLog->setCursor(Qt::PointingHandCursor);Theme::setStyle(clearLog,"QPushButton {background:#ffffff;color:#203d4e;border:1px solid #d9e4e9;border-radius:6px;padding:5px 12px;} QPushButton:hover {background:#e5f3ef;}");
     logHeader->addWidget(clearLog);layout->addLayout(logHeader);
     log_=new QPlainTextEdit;log_->setObjectName("handpanKeyLog");log_->setAccessibleName("按键触发日志");log_->setReadOnly(true);log_->setMaximumBlockCount(1000);
     log_->setPlaceholderText("按下键盘或点击音键后，这里显示时间、按键、音高和输入方式。");
     log_->setMinimumHeight(220);
-    log_->setStyleSheet("QPlainTextEdit {background:#ffffff;color:#203d4e;border:1px solid #d9e4e9;border-radius:8px;padding:6px;font-family:'Microsoft YaHei UI';font-size:12px;selection-background-color:#d9eeea;selection-color:#203d4e;}");
+    Theme::setStyle(log_,"QPlainTextEdit {background:#ffffff;color:#203d4e;border:1px solid #d9e4e9;border-radius:8px;padding:6px;font-family:'Microsoft YaHei UI';font-size:12px;selection-background-color:#d9eeea;selection-color:#203d4e;}");
     layout->addWidget(log_,1);connect(clearLog,&QPushButton::clicked,log_,&QPlainTextEdit::clear);
     connect(board_,&HandpanBoard::padPressed,this,[this](int target){press(target,true);});
     connect(board_,&HandpanBoard::padReleased,this,[this](int target){release(target,true);});

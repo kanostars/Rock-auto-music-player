@@ -38,6 +38,7 @@ signals:
     void addRequested(double start, int target);
     void addModeChanged(bool enabled);
     void rangeEdited(double first,double last);
+    void rangeBoundaryToPlayheadRequested(bool left,double seconds);
 protected:
     bool event(QEvent*) override;
     void paintEvent(QPaintEvent*) override;

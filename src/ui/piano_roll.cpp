@@ -1,4 +1,6 @@
 #include "piano_roll.h"
+#include "theme.h"
+#include "app/preferences.h"
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -87,11 +89,11 @@ QRectF PianoRoll::noteRect(const MappedNote& n) const {
 }
 void PianoRoll::paintEvent(QPaintEvent*) {
     QPainter p(viewport()); p.setRenderHint(QPainter::Antialiasing);
-    p.fillRect(viewport()->rect(),QColor("#ffffff"));
+    p.fillRect(viewport()->rect(),Theme::color("#ffffff"));
     const int w=viewport()->width(),h=viewport()->height(),rh=rowHeight();
     for(int r=0;r<10;++r) {
-        p.fillRect(gutter_,top_+r*rh,w-gutter_,rh,QColor(r%2?"#f5f8fa":"#fcfdfd"));
-        p.setPen(QColor("#e6edef"));p.drawLine(gutter_,top_+(r+1)*rh,w,top_+(r+1)*rh);
+        p.fillRect(gutter_,top_+r*rh,w-gutter_,rh,Theme::color(r%2?"#f5f8fa":"#fcfdfd"));
+        p.setPen(Theme::color("#e6edef"));p.drawLine(gutter_,top_+(r+1)*rh,w,top_+(r+1)*rh);
     }
     const double left=horizontalScrollBar()->value()/pixels_;
     double step=std::pow(10,std::floor(std::log10(85/pixels_)));
@@ -99,17 +101,17 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     p.setFont(QFont("Segoe UI",9));
     for(double t=std::ceil(left/step)*step;t<left+(w-gutter_)/pixels_;t+=step) {
         double x=gutter_+(t-left)*pixels_;
-        p.setPen(QColor("#e3ebee"));p.drawLine(QPointF(x,top_),QPointF(x,h));
-        p.setPen(QColor("#83949f"));p.drawText(QRectF(x+6,9,100,22),QString::number(t,'f',step<1?1:0)+" s");
+        p.setPen(Theme::color("#e3ebee"));p.drawLine(QPointF(x,top_),QPointF(x,h));
+        p.setPen(Theme::color("#83949f"));p.drawText(QRectF(x+6,9,100,22),QString::number(t,'f',step<1?1:0)+" s");
     }
     p.save();p.setClipRect(gutter_,top_,w-gutter_,h-top_);
     int count=0;
     auto drawNote=[&](const MappedNote& n) {
         auto rect=noteRect(n);
         if(rect.right()<gutter_||rect.left()>w) return;
-        QColor color=n.mapping==Mapping::Edited?QColor("#6582bd"):n.mapping==Mapping::Exact?QColor("#189e91"):n.mapping==Mapping::Approximate?QColor("#d5a14a"):QColor("#b7c1cb");
-        if(n.conflict) color=QColor("#d4656d");
-        p.setBrush(color);p.setPen(selection_.contains(n.source)?QPen(QColor("#142e3e"),2):Qt::NoPen);
+        QColor color=n.mapping==Mapping::Edited?Theme::color("#6582bd"):n.mapping==Mapping::Exact?Theme::color("#189e91"):n.mapping==Mapping::Approximate?Theme::color("#d5a14a"):Theme::color("#b7c1cb");
+        if(n.conflict) color=Theme::color("#d4656d");
+        p.setBrush(color);p.setPen(selection_.contains(n.source)?QPen(Theme::color("#142e3e"),2):Qt::NoPen);
         p.drawRoundedRect(rect,4,4);
         if(rect.width()>19) {
             p.setPen(Qt::white);p.setFont(QFont("Segoe UI",9,QFont::DemiBold));
@@ -118,7 +120,7 @@ void PianoRoll::paintEvent(QPaintEvent*) {
         }
         if(selection_.contains(n.source)&&n.target>=0&&!deleteMode_&&editingEnabled_) {
             auto [leftHandle,rightHandle]=handles(n);
-            p.setBrush(Qt::white);p.setPen(QPen(QColor("#203d4e"),1));
+            p.setBrush(Qt::white);p.setPen(QPen(Theme::color("#203d4e"),1));
             p.drawRoundedRect(leftHandle,1,1);p.drawRoundedRect(rightHandle,1,1);
         }
     };
@@ -130,7 +132,7 @@ void PianoRoll::paintEvent(QPaintEvent*) {
         if(!isEditing()||gesture_==Gesture::Box||draggingRange()||!editable(id))drawNote(result_->notes[id]);
     if(isEditing()&&gesture_!=Gesture::Box&&!draggingRange())for(const auto& n:previews_)drawNote(n);
     if(gesture_==Gesture::Box&&dragMoved_) {
-        p.setBrush(QColor(53,94,232,30));p.setPen(QPen(QColor("#355ee8"),1,Qt::DashLine));p.drawRect(selectionRect());
+        p.setBrush(QColor(53,94,232,30));p.setPen(QPen(Theme::color("#355ee8"),1,Qt::DashLine));p.drawRect(selectionRect());
     }
     if(result_&&rangeEnd_>=0){
         const double a=gutter_+(rangeStart_-left)*pixels_,b=gutter_+(rangeEnd_-left)*pixels_;
@@ -139,40 +141,40 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     }
     if(result_&&count) {
         double x=gutter_+(playhead_-left)*pixels_;
-        p.setPen(QPen(QColor("#355ee8"),1.5));p.drawLine(QPointF(x,top_),QPointF(x,h));
+        p.setPen(QPen(Theme::color("#355ee8"),1.5));p.drawLine(QPointF(x,top_),QPointF(x,h));
     }
     p.restore();
     if(result_&&result_->duration>0&&rangeEnd_>=0){
         p.save();p.setClipRect(gutter_,top_-13,w-gutter_,h-top_+13);
-        p.setPen(QPen(QColor("#20a45b"),1.5));
+        p.setPen(QPen(Theme::color("#20a45b"),1.5));
         for(double t:{rangeStart_,rangeEnd_}){
             const double x=gutter_+(t-left)*pixels_;
             p.drawLine(QPointF(x,top_),QPointF(x,h));
-            p.setBrush(QColor("#20a45b"));p.drawRoundedRect(QRectF(x-3,top_-8,6,11),2,2);
+            p.setBrush(Theme::color("#20a45b"));p.drawRoundedRect(QRectF(x-3,top_-8,6,11),2,2);
         }
         p.restore();
     }
-    p.fillRect(0,0,gutter_,h,QColor("#f6f9fa"));
-    p.setPen(QColor("#83949f"));p.setFont(QFont("Microsoft YaHei UI",9));
+    p.fillRect(0,0,gutter_,h,Theme::color("#f6f9fa"));
+    p.setPen(Theme::color("#83949f"));p.setFont(QFont("Microsoft YaHei UI",9));
     p.drawText(QRect(16,9,70,24),Qt::AlignVCenter,"按键 / 音高");
     for(int r=0;r<10;++r) {
         QRect rr(0,top_+r*rh,gutter_,rh);
         if(r<9) {
             int i=8-r;
-            p.setPen(QColor("#203d4e"));p.setFont(QFont("Segoe UI",12,QFont::Bold));
+            p.setPen(Theme::color("#203d4e"));p.setFont(QFont("Segoe UI",12,QFont::Bold));
             p.drawText(rr.adjusted(20,0,0,0),Qt::AlignVCenter,QString(QChar(keys[i])));
-            p.setPen(QColor("#8495a0"));p.setFont(QFont("Segoe UI",9));
+            p.setPen(Theme::color("#8495a0"));p.setFont(QFont("Segoe UI",9));
             p.drawText(rr.adjusted(50,0,0,0),Qt::AlignVCenter,QString::fromStdString(pitchName(pitches[i])));
-        } else {p.setPen(QColor("#93a0aa"));p.setFont(QFont("Microsoft YaHei UI",9));p.drawText(rr,Qt::AlignCenter,"已跳过");}
+        } else {p.setPen(Theme::color("#93a0aa"));p.setFont(QFont("Microsoft YaHei UI",9));p.drawText(rr,Qt::AlignCenter,"已跳过");}
     }
-    p.setPen(QColor("#e2eaed"));p.drawLine(gutter_-1,0,gutter_-1,h);
+    p.setPen(Theme::color("#e2eaed"));p.drawLine(gutter_-1,0,gutter_-1,h);
     if(!result_ || !count) {
         QRectF box(gutter_+20,h/2.0-53,w-gutter_-40,108);
-        p.fillRect(box,QColor(255,255,255,236));
-        p.setPen(QColor("#315162"));p.setFont(QFont("Microsoft YaHei UI",14,QFont::DemiBold));
+        p.fillRect(box,Theme::color("#ffffff",236));
+        p.setPen(Theme::color("#315162"));p.setFont(QFont("Microsoft YaHei UI",14,QFont::DemiBold));
         p.drawText(box.adjusted(0,0,0,-42),Qt::AlignCenter,addMode_?"点击九键任一行添加音符":result_?"当前没有可显示的音符":"把 MIDI 变成九键旋律");
-        p.setPen(QColor("#879aa6"));p.setFont(QFont("Microsoft YaHei UI",10));
-        p.drawText(box.adjusted(0,45,0,0),Qt::AlignCenter,addMode_?"默认一拍 · 添加后可拖动或拉伸 · Esc 退出":result_?"检查音轨勾选、显示范围或转换选项":"点击右上方「导入 MIDI」，或拖入本地文件");
+        p.setPen(Theme::color("#879aa6"));p.setFont(QFont("Microsoft YaHei UI",10));
+        p.drawText(box.adjusted(0,45,0,0),Qt::AlignCenter,addMode_?QString("默认一拍 · 添加后可拖动或拉伸 · %1 退出").arg(Preferences::instance().shortcutText(ShortcutAction::CancelEdit)):result_?"检查音轨勾选、显示范围或转换选项":"点击右上方「导入 MIDI」，或拖入本地文件");
     }
 }
 bool PianoRoll::event(QEvent* e) {
@@ -248,7 +250,8 @@ void PianoRoll::mouseMoveEvent(QMouseEvent* e) {
     if(isEditing()) {lastPointer_=e->position();updateGesture(lastPointer_);return;}
     if(rangePartAt(e->position())!=Gesture::None){
         viewport()->setCursor(Qt::SizeHorCursor);
-        QToolTip::showText(e->globalPosition().toPoint(),QString("拖动绿色边界调整区间\n%1 s — %2 s · %3 s\nEsc 取消拖动").arg(rangeStart_,0,'f',3).arg(rangeEnd_,0,'f',3).arg(rangeEnd_-rangeStart_,0,'f',3),viewport());return;
+        auto& shortcuts=Preferences::instance();
+        QToolTip::showText(e->globalPosition().toPoint(),QString("拖动绿色边界调整区间\n%1 s — %2 s · %3 s\n%4 左边界 / %5 右边界移至蓝色播放标\n%6 取消拖动").arg(rangeStart_,0,'f',3).arg(rangeEnd_,0,'f',3).arg(rangeEnd_-rangeStart_,0,'f',3).arg(shortcuts.shortcutText(ShortcutAction::RangeLeftToPlayhead),shortcuts.shortcutText(ShortcutAction::RangeRightToPlayhead),shortcuts.shortcutText(ShortcutAction::CancelEdit)),viewport());return;
     }
     int id=hit(e->position());
     if(id<0&&addMode_&&editingEnabled_) {
@@ -264,7 +267,7 @@ void PianoRoll::mouseMoveEvent(QMouseEvent* e) {
     QToolTip::showText(e->globalPosition().toPoint(),QString("%1 → %2\n开始 %3 s · 持续 %4 s\n音轨 %5 / 通道 %6\n%7")
         .arg(QString::fromStdString(pitchName(src.pitch)),target).arg(n.start,0,'f',3).arg(n.duration,0,'f',3)
         .arg(song_->tracks[src.track].source+1).arg(song_->tracks[src.track].channel+1)
-        .arg(!editingEnabled_?"试听期间音符锁定，可点击查看":deleteMode_?"点击删除音符":n.target<0?"Delete 删除 / 右键菜单":"拖动中间移动 · 拖动两端调整时长 · Delete 删除"),viewport());
+        .arg(!editingEnabled_?"试听期间音符锁定，可点击查看":deleteMode_?"点击删除音符":n.target<0?Preferences::instance().shortcutText(ShortcutAction::DeleteNotes)+" 删除 / 右键菜单":"拖动中间移动 · 拖动两端调整时长 · "+Preferences::instance().shortcutText(ShortcutAction::DeleteNotes)+" 删除"),viewport());
 }
 void PianoRoll::wheelEvent(QWheelEvent* e) {
     if(isEditing()) {e->accept();return;}
@@ -369,16 +372,22 @@ void PianoRoll::mouseReleaseEvent(QMouseEvent* e) {
     updateRange();
 }
 void PianoRoll::keyPressEvent(QKeyEvent* e) {
-    if(e->key()==Qt::Key_Escape&&isEditing()){cancelGesture();updateRange();e->accept();return;}
-    if(e->key()==Qt::Key_Escape&&addMode_){setAddMode(false);e->accept();return;}
-    if(e->key()==Qt::Key_Escape){selection_.clear();notifySelection();e->accept();return;}
-    if(e->matches(QKeySequence::SelectAll)&&result_&&!isEditing()) {
+    const bool left=matchesShortcut(ShortcutAction::RangeLeftToPlayhead,e),right=matchesShortcut(ShortcutAction::RangeRightToPlayhead,e);
+    if(left||right){
+        if(!e->isAutoRepeat()&&result_&&result_->duration>0&&rangeEnd_>=0&&!isEditing())emit rangeBoundaryToPlayheadRequested(left,playhead_);
+        e->accept();return;
+    }
+    if(matchesShortcut(ShortcutAction::CancelEdit,e)&&isEditing()){cancelGesture();updateRange();e->accept();return;}
+    if(matchesShortcut(ShortcutAction::CancelEdit,e)&&addMode_){setAddMode(false);e->accept();return;}
+    if(matchesShortcut(ShortcutAction::CancelEdit,e)){selection_.clear();notifySelection();e->accept();return;}
+    if(matchesShortcut(ShortcutAction::SelectAll,e)&&result_&&!isEditing()) {
         selection_.clear();for(const auto& n:result_->notes)if(visibleNote(n))selection_.insert(n.source);
         notifySelection();e->accept();return;
     }
-    if(e->key()==Qt::Key_Delete&&editingEnabled_&&!selection_.empty()&&!isEditing()) {emit deleteRequested();e->accept();return;}
-    if((e->key()==Qt::Key_Up||e->key()==Qt::Key_Down)&&editingEnabled_&&!isEditing()) {
-        transposeSelection(e->key()==Qt::Key_Up?1:-1);e->accept();return;
+    const bool up=matchesShortcut(ShortcutAction::PitchUp,e),down=matchesShortcut(ShortcutAction::PitchDown,e);
+    if(matchesShortcut(ShortcutAction::DeleteNotes,e)&&editingEnabled_&&!selection_.empty()&&!isEditing()) {emit deleteRequested();e->accept();return;}
+    if((up||down)&&editingEnabled_&&!isEditing()) {
+        transposeSelection(up?1:-1);e->accept();return;
     }
     QAbstractScrollArea::keyPressEvent(e);
 }
@@ -410,7 +419,7 @@ void PianoRoll::contextMenuEvent(QContextMenuEvent* e) {
     if(!editingEnabled_){e->accept();return;}
     int id=hit(viewport()->mapFromGlobal(e->globalPos()));if(id<0)return;
     cancelGesture();if(!selection_.contains(id))selection_={id};selected_=id;notifySelection();emit editStarted();
-    QMenu menu(this);auto* remove=menu.addAction(QString("删除选中 %1 个音符\tDelete").arg(selection_.size()));
+    QMenu menu(this);auto* remove=menu.addAction(QString("删除选中 %1 个音符\t%2").arg(selection_.size()).arg(Preferences::instance().shortcutText(ShortcutAction::DeleteNotes)));
     if(menu.exec(e->globalPos())==remove)emit deleteRequested();
 }
 }

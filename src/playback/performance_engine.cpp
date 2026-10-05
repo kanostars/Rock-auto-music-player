@@ -48,10 +48,10 @@ void PerformanceEngine::pause(double now,const QString& reason) {
     state_.state=PerformanceState::Paused;state_.message=reason;
 }
 void PerformanceEngine::togglePause(double now) {
-    if(seeking_){seekState_=PerformanceState::Paused;state_.message="定位后保持暂停 · Ctrl+Alt+Q 继续，Ctrl+Alt+E 终止";return;}
-    if(state_.state==PerformanceState::Playing||state_.state==PerformanceState::Countdown){pause(now,"已暂停 · Ctrl+Alt+Q 继续，Ctrl+Alt+E 终止");}
+    if(seeking_){seekState_=PerformanceState::Paused;state_.message="定位后保持暂停 · {performancePause} 继续，{performanceStop} 终止";return;}
+    if(state_.state==PerformanceState::Playing||state_.state==PerformanceState::Countdown){pause(now,"已暂停 · {performancePause} 继续，{performanceStop} 终止");}
     else if(state_.state==PerformanceState::Paused){
-        if(output_->targetStatus()!=TargetStatus::Ready){state_.message="请先手动切换到目标窗口，再按 Ctrl+Alt+Q 继续。";return;}
+        if(output_->targetStatus()!=TargetStatus::Ready){state_.message="请先手动切换到目标窗口，再按 {performancePause} 继续。";return;}
         anchor_=now;base_=state_.position;deadline_=now+remaining_;
         state_.state=pausedCountdown_?PerformanceState::Countdown:PerformanceState::Playing;state_.message="继续演奏";
     }
@@ -69,7 +69,7 @@ void PerformanceEngine::seek(PerformancePlan plan,double now){
     base_=state_.position=plan_.start;anchor_=now;
     // Keep the physical release timestamps, even when rewinding the score.
     // A new strike still waits for the configured release gap.
-    state_.countdown=remaining_;state_.message="已定位 · Ctrl+Alt+Q 继续，Ctrl+Alt+E 终止";
+    state_.countdown=remaining_;state_.message="已定位 · {performancePause} 继续，{performanceStop} 终止";
     if(seekState_!=PerformanceState::Paused){
         pausedCountdown_=seekState_==PerformanceState::Countdown;
         togglePause(now);
@@ -84,7 +84,7 @@ void PerformanceEngine::tick(double now) {
     if(state_.state==PerformanceState::Paused)return;
     if(state_.state==PerformanceState::Countdown){state_.countdown=std::max(0.0,deadline_-now);if(now<deadline_)return;
         state_.state=PerformanceState::Playing;anchor_=now;base_=state_.position;state_.message="正在演奏";}
-    if(target!=TargetStatus::Ready){pause(now,"目标窗口不在前台，已暂停。切回目标后按 Ctrl+Alt+Q 继续。");return;}
+    if(target!=TargetStatus::Ready){pause(now,"目标窗口不在前台，已暂停。切回目标后按 {performancePause} 继续。");return;}
     if(output_->modifiersHeld()){
         if(!releaseAll(now)){fail("松键失败",now);return;}anchor_=now;base_=state_.position;state_.message="等待松开 Ctrl / Alt / Shift / Win 后继续";return;
     }
@@ -97,7 +97,7 @@ void PerformanceEngine::tick(double now) {
     }
     if(next_<plan_.strikes.size()&&plan_.strikes[next_].time<=state_.position+1e-9){
         const auto strike=plan_.strikes[next_];
-        if(state_.position-strike.time>.1){state_.position=strike.time;pause(now,"系统调度延迟过大，已暂停；按 Ctrl+Alt+Q 从当前音符继续。");return;}
+        if(state_.position-strike.time>.1){state_.position=strike.time;pause(now,"系统调度延迟过大，已暂停；按 {performancePause} 从当前音符继续。");return;}
         // Preflight already rejects score-level conflicts. A late dispatch/release can
         // still make a valid repeat arrive before the physical key is ready. Wait for
         // the full release gap and rebase the score clock, keeping this chord intact
@@ -106,7 +106,7 @@ void PerformanceEngine::tick(double now) {
             base_=state_.position=strike.time;anchor_=now;return;
         }
         held_|=strike.keys;for(int key=0;key<9;++key)if(strike.keys&(1<<key))releaseAt_[key]=now+plan_.hold;
-        if(!output_->send({strike.keys,0})){fail("按键发送失败，演奏终止。",now);return;}++next_;state_.message="正在演奏 · Ctrl+Alt+Q 暂停，Ctrl+Alt+E 终止";
+        if(!output_->send({strike.keys,0})){fail("按键发送失败，演奏终止。",now);return;}++next_;state_.message="正在演奏 · {performancePause} 暂停，{performanceStop} 终止";
     }
     if(next_==plan_.strikes.size()&&!held_&&state_.position>=plan_.duration){output_->close();state_.state=PerformanceState::Finished;state_.message="演奏完成，已释放按键。";}
 }

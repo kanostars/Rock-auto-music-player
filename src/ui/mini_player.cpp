@@ -1,4 +1,6 @@
 #include "mini_player.h"
+#include "theme.h"
+#include "app/preferences.h"
 #include "playback_icons.h"
 #include <QCloseEvent>
 #include <QFrame>
@@ -53,22 +55,22 @@ public:using QStyledItemDelegate::QStyledItemDelegate;
         const double s=scale();auto px=[s](int n){return qRound(n*s);};
         p->save();p->setRenderHint(QPainter::Antialiasing);auto r=option.rect.adjusted(px(4),px(2),-px(4),-px(2));
         const bool selected=option.state&QStyle::State_Selected;
-        if(selected||option.state&QStyle::State_MouseOver){p->setPen(Qt::NoPen);p->setBrush(QColor(selected?"#eaf5f1":"#f5f9fa"));p->drawRoundedRect(r,10*s,10*s);}
-        p->setFont(option.font);p->setPen(QColor(selected?"#178e80":"#8397a3"));
+        if(selected||option.state&QStyle::State_MouseOver){p->setPen(Qt::NoPen);p->setBrush(Theme::color(selected?"#eaf5f1":"#f5f9fa"));p->drawRoundedRect(r,10*s,10*s);}
+        p->setFont(option.font);p->setPen(Theme::color(selected?"#178e80":"#8397a3"));
         p->drawText(r.adjusted(px(9),0,0,0),Qt::AlignVCenter,selected?QString::fromUtf8("♪"):QString::number(index.row()+1).rightJustified(2,'0'));
-        const auto title=index.data().toString().section('\n',0,0);p->setPen(QColor(selected?"#107566":"#526c7c"));
+        const auto title=index.data().toString().section('\n',0,0);p->setPen(Theme::color(selected?"#107566":"#526c7c"));
         const auto textRect=r.adjusted(px(40),0,-px(64),0);p->drawText(textRect,Qt::AlignVCenter,option.fontMetrics.elidedText(title,Qt::ElideRight,textRect.width()));
-        p->setPen(QColor("#8397a3"));p->drawText(r.adjusted(0,0,-px(12),0),Qt::AlignRight|Qt::AlignVCenter,clockText(index.data(Qt::UserRole).toDouble()));p->restore();
+        p->setPen(Theme::color("#8397a3"));p->drawText(r.adjusted(0,0,-px(12),0),Qt::AlignRight|Qt::AlignVCenter,clockText(index.data(Qt::UserRole).toDouble()));p->restore();
     }
 };
 class ResizeHandle:public QWidget {
 public:explicit ResizeHandle(QWidget* parent):QWidget(parent){setFixedSize(18,14);setCursor(Qt::SizeFDiagCursor);setToolTip("拖动等比例缩放胶囊，大小会自动记住");setAccessibleName("调整胶囊大小");}
-protected:void paintEvent(QPaintEvent*) override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);p.scale(width()/18.0,height()/14.0);p.setPen(QPen(QColor("#a8bfc5"),1.3,Qt::SolidLine,Qt::RoundCap));p.drawLine(4,11,14,1);p.drawLine(9,11,14,6);}
+protected:void paintEvent(QPaintEvent*) override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);p.scale(width()/18.0,height()/14.0);p.setPen(QPen(Theme::color("#a8bfc5"),1.3,Qt::SolidLine,Qt::RoundCap));p.drawLine(4,11,14,1);p.drawLine(9,11,14,6);}
 };
 }
 MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::FramelessWindowHint|Qt::WindowStaysOnTopHint|Qt::WindowDoesNotAcceptFocus){
     setObjectName("miniPlayer");setWindowTitle("九键手碟 · 小窗播放器");setAttribute(Qt::WA_TranslucentBackground);setAttribute(Qt::WA_ShowWithoutActivating);setAttribute(Qt::WA_QuitOnClose,false);setFocusPolicy(Qt::NoFocus);
-    setStyleSheet(R"(
+    Theme::setStyle(this,R"(
         QWidget {font-family:'Microsoft YaHei UI';font-size:12px;color:#203d4e;}
         QFrame#miniCapsule {background:white;border:1px solid #dce6eb;border-radius:56px;}
         QFrame#miniQueue,QFrame#miniOpacityPanel {background:white;border:1px solid #dce6eb;border-radius:20px;}
@@ -105,7 +107,7 @@ MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::Framel
     play_->setFixedSize(42,42);play_->setIcon(playlistIcon(PlaylistIcon::Play,true));
     mode_=action(PlaylistIcon::Once,"单曲播放完停止","miniMode");list_=action(PlaylistIcon::List,"展开曲目列表","miniList");list_->setCheckable(true);
     for(auto* b:{previous_,play_,next_,mode_,list_})top->addWidget(b);
-    auto* separator=new QFrame;separator->setFixedSize(1,26);separator->setStyleSheet("background:#e4ebef;");top->addSpacing(5);top->addWidget(separator);top->addSpacing(5);
+    auto* separator=new QFrame;separator->setFixedSize(1,26);Theme::setStyle(separator,"background:#e4ebef;");top->addSpacing(5);top->addWidget(separator);top->addSpacing(5);
     auto* restore=action(PlaylistIcon::Restore,"返回主窗口","miniRestore");auto* quit=action(PlaylistIcon::Power,"退出整个程序","miniQuit");top->addWidget(restore);top->addWidget(quit);
     opacityButton_=action(PlaylistIcon::Opacity,"调整小窗透明度","miniOpacityButton");opacityButton_->setCheckable(true);top->insertWidget(top->count()-2,opacityButton_);
     auto* progressRow=new QHBoxLayout;progressRow->setSpacing(9);progressRow->setContentsMargins(76,0,10,0);capsuleLayout->addLayout(progressRow);
@@ -137,6 +139,7 @@ MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::Framel
     connect(volume_,&QSlider::valueChanged,this,[this](int value){volumeText_->setText(QString::number(value)+"%");volume_->setToolTip(QString("试听音量 %1%（0 为静音）").arg(value));emit volumeRequested(value);});
     connect(up_,&QPushButton::clicked,this,[this]{const int row=songs_->currentIndex().row();emit moveRequested(row,row-1);});connect(down_,&QPushButton::clicked,this,[this]{const int row=songs_->currentIndex().row();emit moveRequested(row,row+1);});connect(remove_,&QPushButton::clicked,this,[this]{emit removeRequested(songs_->currentIndex().row());});
     captureMetrics();applyScale(1);
+    connect(&Preferences::instance(),&Preferences::themeChanged,this,[this]{speaker_->setPixmap(playlistIcon(PlaylistIcon::Volume).pixmap(qRound(16*scale_),qRound(16*scale_)));});
 }
 void MiniPlayer::setState(const MiniPlayerState& s){
     const bool playingChanged=!initialized_||s.playing!=state_.playing;
@@ -182,7 +185,7 @@ void MiniPlayer::arrange(const QPoint& capsuleOrigin,QScreen* preferred){
     capsule_->setFixedSize(capsuleExtent);
     // CSS drops oversized corner radii; floor half of an odd pixel height.
     const QString rounded=QString("QFrame#miniCapsule {border-radius:%1px;}").arg(capsuleExtent.height()/2);
-    if(capsule_->styleSheet()!=rounded)capsule_->setStyleSheet(rounded);
+    if(capsule_->styleSheet()!=rounded)Theme::setStyle(capsule_,rounded);
     queue_->setFixedSize(px(620),queueHeight);queue_->setVisible(expanded_);
     opacityPanel_->setFixedSize(px(620),opacityHeight);opacityPanel_->setVisible(opacityExpanded_);
     const QSize extent(capsuleExtent.width()+2*margin,capsuleExtent.height()+2*margin+extra);
@@ -193,7 +196,7 @@ void MiniPlayer::arrange(const QPoint& capsuleOrigin,QScreen* preferred){
 void MiniPlayer::toggleList(){const auto origin=capsule_->mapToGlobal(QPoint());expanded_=!expanded_;list_->setChecked(expanded_);list_->setToolTip(expanded_?"收起曲目列表":"展开曲目列表");list_->setAccessibleName(list_->toolTip());arrange(origin);savePosition();}
 void MiniPlayer::toggleOpacity(){const auto origin=capsule_->mapToGlobal(QPoint());opacityExpanded_=!opacityExpanded_;opacityButton_->setChecked(opacityExpanded_);arrange(origin);savePosition();}
 void MiniPlayer::captureMetrics(){
-    baseStyle_=styleSheet();
+    baseStyle_=Theme::sourceStyle(this);
     for(auto* widget:findChildren<QWidget*>()){
         const auto minimum=widget->minimumSize(),maximum=widget->maximumSize();
         const QSize fixed(minimum.width()==maximum.width()?minimum.width():-1,minimum.height()==maximum.height()?minimum.height():-1);
@@ -210,7 +213,7 @@ void MiniPlayer::applyScale(double factor){
     // Always scale the captured base metrics, never the already scaled UI.
     QString scaled;qsizetype offset=0;const QRegularExpression pattern("(\\d+)px");auto matches=pattern.globalMatch(baseStyle_);
     while(matches.hasNext()){const auto match=matches.next();scaled+=baseStyle_.mid(offset,match.capturedStart()-offset)+QString::number(px(match.captured(1).toInt()))+"px";offset=match.capturedEnd();}
-    scaled+=baseStyle_.mid(offset);setStyleSheet(scaled);
+    scaled+=baseStyle_.mid(offset);Theme::setStyle(this,scaled);
     for(const auto& m:widgetMetrics_){
         if(m.fixed.width()>0)m.widget->setFixedWidth(std::max(1,px(m.fixed.width())));
         if(m.fixed.height()>0)m.widget->setFixedHeight(std::max(1,px(m.fixed.height())));

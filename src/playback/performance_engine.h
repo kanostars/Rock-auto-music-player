@@ -26,7 +26,7 @@ struct PerformanceSnapshot {
     PerformanceState state{PerformanceState::Idle};double position{},countdown{};QString message;
     bool active() const{return state==PerformanceState::Countdown||state==PerformanceState::Playing||state==PerformanceState::Paused;}
 };
-// All methods are serialized by the controller. Explicit monotonic time permits deterministic tests.
+// The controller serializes calls and supplies monotonic time for scheduling.
 class PerformanceEngine {
 public:
     explicit PerformanceEngine(std::unique_ptr<KeyOutput> output):output_(std::move(output)){}

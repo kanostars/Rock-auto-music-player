@@ -24,9 +24,8 @@ function(rock_deploy_runtime target uses_qt)
             COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>/platforms"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_FILE:Qt6::QWindowsIntegrationPlugin>"
-                "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
                 "$<TARGET_FILE_DIR:${target}>/platforms"
-            COMMENT "Deploying Qt runtime and platform plugins for ${target}"
+            COMMENT "Deploying Qt runtime and Windows platform plugin for ${target}"
             COMMAND_EXPAND_LISTS VERBATIM)
     endif()
 endfunction()

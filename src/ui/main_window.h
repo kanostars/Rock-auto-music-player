@@ -11,10 +11,13 @@ class QLabel; class QPushButton; class QComboBox; class QDoubleSpinBox;
 class QSpinBox; class QListWidget; class QTreeWidget; class QTabWidget;
 class QProgressBar; class QSplitter; class QVBoxLayout;
 class QSlider;
+class QShortcut;
 namespace rock {
 class PianoRoll;
 class PerformancePanel;
 class MiniPlayer;
+class SettingsPage;
+class GlobalShortcut;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -28,6 +31,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent*) override;
     void dropEvent(QDropEvent*) override;
 private:
+    enum class TextScoreFormat { Hand, Keys };
     struct EditChange {int source{};std::optional<NoteEdit> before, after;};
     struct TimelineState {Song song;NoteEdits edits;int first{},last{-1};};
     struct HistoryEntry {
@@ -64,18 +68,25 @@ private:
     MiniPlayer* mini_{};QTimer miniRefresh_;bool miniPerformance_{true};
     bool miniSeekResume_{},miniSeekPerformance_{};std::shared_ptr<Song> miniSeekSong_;
     QTabWidget* tabs_{};
+    SettingsPage* appSettings_{};QPushButton* settingsNavigation_{};
+    std::array<QShortcut*,3> editorShortcuts_{};QShortcut* fullscreenShortcut_{};
+    std::array<GlobalShortcut*,3> globalShortcuts_{};bool closing_{};
     QLabel *songTitle_{},*subtitle_{},*status_{},*details_{},*clock_{},*dirty_{},*summary_{},*zoomText_{};
     QComboBox *strategy_{},*tempoMode_{},*filter_{},*octaveMode_{};
     QLabel* octaveInfo_{};
     QDoubleSpinBox *bpm_{},*speed_{};
     QSpinBox *hold_{},*gap_{};
-    QPushButton *import_{},*exportMidi_{},*apply_{},*play_{},*stop_{},*cancelButton_{};
+    QPushButton *import_{},*exportMidi_{},*copyHandScore_{},*copyKeyScore_{},*apply_{},*play_{},*stop_{},*cancelButton_{};
     QPushButton *addNote_{},*deleteNote_{},*deleteMode_{},*undo_{},*redo_{};
     QProgressBar* progress_{};
     AudioPlayer audio_;
     QSlider* volume_{};
     QTimer timer_; double position_{};
     void buildUi();
+    void showAppSettings(bool show);
+    void updateShortcuts();
+    void updateGlobalShortcuts();
+    void toggleMiniPlayer();
     void openMiniPlayer();
     void restoreMainWindow();
     void syncMiniPlayer();
@@ -97,6 +108,9 @@ private:
     void showNote(int source);
     void showDiagnostics();
     void exportCurrentMidi();
+    bool currentScoreText(TextScoreFormat format,QString& text);
+    void copyCurrentScore(TextScoreFormat format);
+    void exportCurrentScore(TextScoreFormat format);
     void setAllTracks(bool enabled);
     void togglePlayback();
     void startPreview();
@@ -111,6 +125,7 @@ private:
     std::pair<double,double> selectedRange() const;
     void refreshRange();
     void changeRange(double start,double end);
+    void moveRangeBoundaryToPlayhead(bool left,double seconds);
     void deleteRange();
     void createRange();
 };

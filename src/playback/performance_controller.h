@@ -1,10 +1,11 @@
 #pragma once
 #include "performance_engine.h"
-#include <QAbstractNativeEventFilter>
+#include "platform/global_shortcut.h"
 #include <mutex>
 #include <thread>
 namespace rock {
-class PerformanceController:public QAbstractNativeEventFilter {
+class PerformanceController:public QObject {
+    Q_OBJECT
 public:
     PerformanceController();
     explicit PerformanceController(std::unique_ptr<KeyOutput> output);
@@ -16,9 +17,9 @@ public:
     void cancelSeek(const QString& reason="定位已取消，演奏保持暂停。");
     void stop();
     PerformanceSnapshot snapshot();
-    bool nativeEventFilter(const QByteArray&,void*,qintptr*) override;
 private:
-    std::mutex mutex_;PerformanceEngine engine_;std::jthread worker_;bool registered_{};
+    std::mutex mutex_;PerformanceEngine engine_;std::jthread worker_;
+    std::array<std::unique_ptr<GlobalShortcut>,2> hotkeys_;
     void unregisterHotkeys();
 };
 }

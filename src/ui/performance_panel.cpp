@@ -1,9 +1,9 @@
 #include "performance_panel.h"
 #include "playback_icons.h"
-#include "handpan_test.h"
+#include "theme.h"
+#include "app/preferences.h"
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialog>
 #include <QFormLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -24,21 +24,20 @@ QPushButton* button(const QString& value,const char* name){auto* w=new QPushButt
 
 }
 PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
-    setObjectName("performancePanel");setStyleSheet("QWidget#performancePanel {background:white;}");
+    setObjectName("performancePanel");Theme::setStyle(this,"QWidget#performancePanel {background:white;}");
     auto* layout=new QVBoxLayout(this);layout->setContentsMargins(14,18,14,14);layout->setSpacing(12);
     auto* heading=new QHBoxLayout;heading->addWidget(text("演奏输出","section"));heading->addStretch();
-    testKeys_=button("测试按键","testKeysButton");heading->addWidget(testKeys_);layout->addLayout(heading);
-    connect(testKeys_,&QPushButton::clicked,this,&PerformancePanel::showKeyTestWindow);
+    layout->addLayout(heading);
     auto* hint=text("共用工作台的曲目、音符、时间与已应用参数。设置 BPM、速度或按键时长后，请先应用转换设置。","muted");hint->setWordWrap(true);layout->addWidget(hint);
     auto addSelector=[&](const QString& name,const char* objectName,const char* refreshName,const char* statusName,const QString& refreshText,QComboBox*& combo,QPushButton*& refresh,QLabel*& status){
         layout->addWidget(text(name,"section"));auto* row=new QHBoxLayout;
-        refresh=button(refreshText,refreshName);refresh->setStyleSheet("padding:7px 8px;");row->addWidget(refresh);
+        refresh=button(refreshText,refreshName);Theme::setStyle(refresh,"padding:7px 8px;");row->addWidget(refresh);
         combo=new QComboBox;combo->setObjectName(objectName);combo->setMinimumWidth(80);combo->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Fixed);
         combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);combo->setEnabled(false);row->addWidget(combo,1);layout->addLayout(row);
         status=text("尚未查找，请点击"+refreshText,"muted");status->setObjectName(statusName);status->setWordWrap(true);layout->addWidget(status);
         connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,combo,status,name](int index){
             combo->setToolTip(index>=0?combo->itemData(index,Qt::ToolTipRole).toString():QString());
-            if(index>=0){status->setText("已选择"+name);status->setStyleSheet("color:#178e80;");}if(start_)updateControls();
+            if(index>=0){status->setText("已选择"+name);Theme::setStyle(status,"color:#178e80;");}if(start_)updateControls();
         });
     };
     addSelector("输出键盘","performanceKeyboard","refreshKeyboardsButton","keyboardDiscoveryStatus","刷新键盘",keyboards_,refreshKeyboards_,keyboardStatus_);
@@ -51,19 +50,21 @@ PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
     countdown_->setRange(1,std::numeric_limits<int>::max());countdown_->setValue(5);countdown_->setSuffix(" 秒");countdown_->setButtonSymbols(QAbstractSpinBox::NoButtons);form->addRow("开始倒计时",countdown_);layout->addLayout(form);
     activate_=new QCheckBox("立即打开目标窗口");activate_->setObjectName("activatePerformanceWindow");activate_->setChecked(true);layout->addWidget(activate_);
     state_=text("请刷新并选择输出键盘和目标窗口。","muted");state_->setObjectName("performanceState");state_->setWordWrap(true);layout->addWidget(state_);
-    layout->addStretch();auto* shortcuts=text("Ctrl+Alt+Q 暂停 / 继续\nCtrl+Alt+E 终止\n目标窗口离开前台时暂停。自动演奏期间锁定音符编辑，终止后恢复。","muted");shortcuts->setWordWrap(true);layout->addWidget(shortcuts);
+    layout->addStretch();shortcutHint_=text({},"muted");shortcutHint_->setWordWrap(true);layout->addWidget(shortcutHint_);
+    auto updateHint=[this]{auto& p=Preferences::instance();shortcutHint_->setText(p.shortcutText(ShortcutAction::PerformancePause)+" 暂停 / 继续 · "+p.shortcutText(ShortcutAction::PerformanceStop)+" 终止\n"+p.shortcutText(ShortcutAction::PerformancePrevious)+" 上一首 · "+p.shortcutText(ShortcutAction::PerformanceNext)+" 下一首\n"+p.shortcutText(ShortcutAction::MiniMode)+" 主窗口 / 小窗切换\n目标窗口离开前台时暂停。自动演奏期间锁定音符编辑，终止后恢复。\n测试按键已移至顶部的设置页面。");};
+    updateHint();connect(&Preferences::instance(),&Preferences::shortcutsChanged,this,updateHint);
 
     playlistControls_=new QWidget(this);auto* actions=new QHBoxLayout(playlistControls_);actions->setContentsMargins(0,0,0,0);actions->setSpacing(6);
     moveUp_=button({},"movePerformanceSongUp");moveDown_=button({},"movePerformanceSongDown");removeSong_=button({},"removePerformanceSong");playMode_=button({},"performancePlayMode");
     for(auto* action:{moveUp_,moveDown_,removeSong_,playMode_}){
         action->setIconSize(QSize(22,22));action->setFixedHeight(34);action->setMinimumWidth(32);
-        action->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);action->setStyleSheet("padding:4px;");actions->addWidget(action,1);
+        action->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);Theme::setStyle(action,"padding:4px;");actions->addWidget(action,1);
     }
     moveUp_->setIcon(playlistIcon(PlaylistIcon::Up));moveUp_->setToolTip("上移曲目");moveUp_->setAccessibleName("上移曲目");
     moveDown_->setIcon(playlistIcon(PlaylistIcon::Down));moveDown_->setToolTip("下移曲目");moveDown_->setAccessibleName("下移曲目");
     removeSong_->setIcon(playlistIcon(PlaylistIcon::Remove));removeSong_->setAccessibleName("删除曲目");
     removeSong_->setToolTip("删除曲目：移出曲目库并清除该曲目的会话编辑，不删除 MIDI 文件。");
-    playMode_->setStyleSheet("QPushButton {padding:4px;background:#e5f3ef;border-color:#badfd5;} QPushButton:hover {background:#d8eee7;} QPushButton:disabled {background:#f5f7f8;border-color:#e6edf0;}");
+    Theme::setStyle(playMode_,"QPushButton {padding:4px;background:#e5f3ef;border-color:#badfd5;} QPushButton:hover {background:#d8eee7;} QPushButton:disabled {background:#f5f7f8;border-color:#e6edf0;}");
     updatePlayMode();
     connect(moveUp_,&QPushButton::clicked,this,[this]{if(library_)emit songMoveRequested(library_->currentRow(),library_->currentRow()-1);});
     connect(moveDown_,&QPushButton::clicked,this,[this]{if(library_)emit songMoveRequested(library_->currentRow(),library_->currentRow()+1);});
@@ -71,6 +72,7 @@ PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
     connect(playMode_,&QPushButton::clicked,this,&PerformancePanel::cyclePlayMode);
     transportControls_=new QWidget(this);auto* transport=new QHBoxLayout(transportControls_);transport->setContentsMargins(0,0,0,0);transport->setSpacing(6);
     previousSong_=button("上一首","previousPerformanceSong");nextSong_=button("下一首","nextPerformanceSong");start_=button("开始演奏","startPerformanceButton");
+    auto updateTransportHints=[this]{auto& p=Preferences::instance();previousSong_->setToolTip("上一首（"+p.shortcutText(ShortcutAction::PerformancePrevious)+"）");nextSong_->setToolTip("下一首（"+p.shortcutText(ShortcutAction::PerformanceNext)+"）");};updateTransportHints();connect(&Preferences::instance(),&Preferences::shortcutsChanged,this,updateTransportHints);
     transport->addWidget(previousSong_);transport->addWidget(nextSong_);transport->addWidget(start_);
     connect(previousSong_,&QPushButton::clicked,this,[this]{navigateSong(true);});connect(nextSong_,&QPushButton::clicked,this,[this]{navigateSong(false);});
     connect(start_,&QPushButton::clicked,this,&PerformancePanel::startRequested);
@@ -160,7 +162,7 @@ void PerformancePanel::refreshDevices(bool keyboard) {
     auto* status=keyboard?keyboardStatus_:windowStatus_;
     {const QSignalBlocker blocker(combo);combo->clear();combo->setCurrentIndex(-1);}
     combo->setToolTip({});combo->setEnabled(false);refresh->setEnabled(false);
-    status->setStyleSheet("color:#8397a3;");status->setText(keyboard?"正在查找键盘…":"正在查找窗口…");
+    Theme::setStyle(status,"color:#8397a3;");status->setText(keyboard?"正在查找键盘…":"正在查找窗口…");
     const auto query=keyboard?discoverKeyboards:discoverWindows;
     // The worker owns its callable and never touches widgets, including after this page is closed.
     watcher.setFuture(QtConcurrent::run([query]{
@@ -180,19 +182,13 @@ void PerformancePanel::discoveryFinished(bool keyboard) {
         combo->setCurrentIndex(-1); // Never silently select the first discovered item.
     }
     if(!result.error.isEmpty()) {
-        combo->clear();combo->setEnabled(false);status->setText(result.error);status->setStyleSheet("color:#bd4f5b;");
+        combo->clear();combo->setEnabled(false);status->setText(result.error);Theme::setStyle(status,"color:#bd4f5b;");
     } else if(combo->count()==0) {
-        status->setText(keyboard?"未找到键盘，请检查连接后重试。":"未找到窗口，请打开目标程序后重试。");status->setStyleSheet("color:#a77722;");
+        status->setText(keyboard?"未找到键盘，请检查连接后重试。":"未找到窗口，请打开目标程序后重试。");Theme::setStyle(status,"color:#a77722;");
     } else {
-        combo->setEnabled(true);status->setText(QString("找到 %1 个%2，请手动选择。").arg(combo->count()).arg(keyboard?"键盘":"窗口"));status->setStyleSheet("color:#178e80;");
+        combo->setEnabled(true);status->setText(QString("找到 %1 个%2，请手动选择。").arg(combo->count()).arg(keyboard?"键盘":"窗口"));Theme::setStyle(status,"color:#178e80;");
     }
     updateControls();
-}
-void PerformancePanel::showKeyTestWindow() {
-    if(!keyTestWindow_) {
-        keyTestWindow_=new HandpanTestDialog(this);keyTestWindow_->setAttribute(Qt::WA_DeleteOnClose);
-    }
-    keyTestWindow_->show();keyTestWindow_->raise();keyTestWindow_->activateWindow();
 }
 PerformancePanel::~PerformancePanel(){controller_.stop();}
 void PerformancePanel::stopPerformance(){if(!switchingSong_){queueActive_=false;resetQueue();}controller_.stop();if(timer_)updatePerformance();}
@@ -201,7 +197,7 @@ void PerformancePanel::updateControls(){
     start_->setEnabled(running_||available);
     refreshKeyboards_->setEnabled(!running_&&!keyboardWatcher_.isRunning());refreshWindows_->setEnabled(!running_&&!windowWatcher_.isRunning());
     keyboards_->setEnabled(!running_&&keyboards_->count()>0);windows_->setEnabled(!running_&&windows_->count()>0);
-    activate_->setEnabled(!running_);testKeys_->setEnabled(!running_);
+    activate_->setEnabled(!running_);
     countdown_->setEnabled(!running_);
     playMode_->setEnabled(canChangePlayMode());if(library_)library_->setEnabled(!libraryBusy_);
     const int count=library_?library_->count():0,row=library_?library_->currentRow():-1;
@@ -214,7 +210,7 @@ void PerformancePanel::updatePerformance(){
     const auto s=controller_.snapshot();snapshot_=s;const bool wasRunning=running_;running_=s.active();
     if(wasRunning||running_)setPreviewPosition(s.position);
     if(!s.message.isEmpty())state_->setText(s.state==PerformanceState::Countdown?QString("倒计时 %1 秒 · %2").arg(static_cast<int>(std::ceil(s.countdown))).arg(s.message):s.message);
-    state_->setStyleSheet(s.state==PerformanceState::Failed?"color:#bd4f5b;":"color:#178e80;");
+    Theme::setStyle(state_,s.state==PerformanceState::Failed?"color:#bd4f5b;":"color:#178e80;");
     start_->setText(s.state==PerformanceState::Paused?"继续演奏":running_?"暂停演奏":"开始演奏");
     updateControls();if(!running_)timer_->stop();
     if(wasRunning!=running_)emit activeChanged(running_);
@@ -243,7 +239,7 @@ void PerformancePanel::seekPerformance(double seconds){
         plan.start=position;controller_.seek(std::move(plan));updatePerformance();
     }catch(const std::exception& e){
         controller_.cancelSeek(QString::fromUtf8(e.what()));updatePerformance();
-        state_->setStyleSheet("color:#bd4f5b;");
+        Theme::setStyle(state_,"color:#bd4f5b;");
     }
 }
 void PerformancePanel::beginSong(){
@@ -259,6 +255,6 @@ void PerformancePanel::beginSong(){
     }catch(const std::exception& e){error=QString::fromUtf8(e.what());}
     queueActive_=false;running_=false;updateControls();emit activeChanged(false);
     snapshot_.state=PerformanceState::Failed;snapshot_.message=error;
-    state_->setText(error);state_->setStyleSheet("color:#bd4f5b;");emit statusChanged(error);
+    state_->setText(error);Theme::setStyle(state_,"color:#bd4f5b;");emit statusChanged(error);
 }
 }

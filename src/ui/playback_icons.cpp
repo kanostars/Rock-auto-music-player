@@ -1,14 +1,21 @@
 #include "playback_icons.h"
+#include "theme.h"
+#include "app/preferences.h"
+#include <QIconEngine>
+#include <QHash>
 #include <QPainter>
 #include <QPainterPath>
 namespace rock {
-QIcon playlistIcon(PlaylistIcon kind,bool light){
+namespace {
+QIcon renderedIcon(PlaylistIcon kind,bool light){
+    static QHash<int,QIcon> cache;const int key=static_cast<int>(kind)*4+(light?2:0)+(Preferences::instance().darkTheme()?1:0);
+    if(cache.contains(key))return cache.value(key);
     QIcon icon;
     for(int size:{24,48})for(bool disabled:{false,true}){
         QPixmap pixmap(size*2,size*2);pixmap.setDevicePixelRatio(2);pixmap.fill(Qt::transparent);
         QPainter p(&pixmap);p.setRenderHint(QPainter::Antialiasing);p.scale(size/24.0,size/24.0);
         const bool mode=kind>=PlaylistIcon::Loop&&kind<=PlaylistIcon::Once;
-        p.setPen(QPen(QColor(disabled?"#afbdc5":light?"#ffffff":mode?"#178e80":"#526c7c"),1.8,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
+        p.setPen(QPen(light&&!disabled?QColor(Qt::white):Theme::color(disabled?"#afbdc5":mode?"#178e80":"#526c7c"),1.8,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
         auto line=[&](qreal x1,qreal y1,qreal x2,qreal y2){p.drawLine(QPointF(x1,y1),QPointF(x2,y2));};
         if(kind==PlaylistIcon::Up||kind==PlaylistIcon::Down){
             const bool up=kind==PlaylistIcon::Up;line(12,5,12,19);
@@ -57,6 +64,17 @@ QIcon playlistIcon(PlaylistIcon kind,bool light){
         }
         p.end();icon.addPixmap(pixmap,disabled?QIcon::Disabled:QIcon::Normal);
     }
-    return icon;
+    cache.insert(key,icon);return icon;
 }
+class ThemeIconEngine:public QIconEngine {
+    PlaylistIcon kind_;bool light_;
+public:
+    ThemeIconEngine(PlaylistIcon kind,bool light):kind_(kind),light_(light){}
+    QIconEngine* clone() const override{return new ThemeIconEngine(kind_,light_);}
+    void paint(QPainter* painter,const QRect& rect,QIcon::Mode mode,QIcon::State state) override{renderedIcon(kind_,light_).paint(painter,rect,Qt::AlignCenter,mode,state);}
+    QPixmap pixmap(const QSize& size,QIcon::Mode mode,QIcon::State state) override{return renderedIcon(kind_,light_).pixmap(size,mode,state);}
+    QPixmap scaledPixmap(const QSize& size,QIcon::Mode mode,QIcon::State state,qreal scale) override{return renderedIcon(kind_,light_).pixmap(size,scale,mode,state);}
+};
+}
+QIcon playlistIcon(PlaylistIcon kind,bool light){return QIcon(new ThemeIconEngine(kind,light));}
 }

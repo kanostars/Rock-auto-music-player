@@ -21,7 +21,7 @@ add_library(midifile STATIC
     third_party/midifile/src/MidiMessage.cpp)
 target_include_directories(midifile PUBLIC third_party/midifile/include)
 set_target_properties(midifile PROPERTIES AUTOMOC OFF)
-add_library(rock_core src/core/music.cpp src/core/midi_export.cpp src/core/timeline.cpp)
+add_library(rock_core src/core/music.cpp src/core/midi_export.cpp src/core/hand_score.cpp src/core/timeline.cpp)
 target_include_directories(rock_core PUBLIC src)
 target_link_libraries(rock_core PUBLIC midifile)
 set_target_properties(rock_core PROPERTIES AUTOMOC OFF)
@@ -33,8 +33,11 @@ add_library(rock_audio src/audio/handpan_mixer.cpp src/audio/audio_player.cpp sr
 set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
+    src/app/preferences.cpp src/app/preferences.h
+    src/ui/theme.cpp src/ui/settings_page.cpp src/ui/settings_page.h
+    src/platform/global_shortcut.cpp src/platform/global_shortcut.h
     src/ui/mini_player.cpp src/ui/mini_player.h src/ui/playback_icons.cpp
-    src/playback/performance_engine.cpp src/playback/performance_controller.cpp src/platform/key_output.cpp
+    src/playback/performance_engine.cpp src/playback/performance_controller.cpp src/playback/performance_controller.h src/platform/key_output.cpp
     src/ui/performance_panel.cpp src/ui/performance_panel.h
     src/ui/handpan_test.cpp src/ui/handpan_test.h
     src/platform/output_discovery.cpp src/platform/output_discovery.h

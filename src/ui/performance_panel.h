@@ -10,7 +10,6 @@ class QLabel;
 class QComboBox;
 class QSpinBox;
 class QPushButton;
-class QDialog;
 class QCheckBox;
 class QTimer;
 class QListWidget;
@@ -98,9 +97,9 @@ namespace rock {
         int playModeIndex_{3}; // Sequence, repeat one, shuffle, play once (default).
         void updatePlayMode();
 
-        QPushButton *refreshKeyboards_{}, *refreshWindows_{}, *start_{}, *testKeys_{};
+        QPushButton *refreshKeyboards_{}, *refreshWindows_{}, *start_{};
+        QLabel* shortcutHint_{};
         QPushButton *previousSong_{}, *nextSong_{}, *removeSong_{}, *moveUp_{}, *moveDown_{};
-        QPointer<QDialog> keyTestWindow_;
         QPointer<QListWidget> library_;
         std::shared_ptr<const Song> song_;
         std::shared_ptr<const Conversion> result_;
@@ -132,6 +131,5 @@ namespace rock {
 
         void discoveryFinished(bool);
 
-        void showKeyTestWindow();
     };
 }
