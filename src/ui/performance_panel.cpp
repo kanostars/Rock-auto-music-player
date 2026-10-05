@@ -49,7 +49,7 @@ PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
     connect(&windowWatcher_,&QFutureWatcher<DiscoveryResult>::finished,this,[this]{discoveryFinished(false);});
     auto* form=new QFormLayout;countdown_=new QSpinBox;countdown_->setObjectName("performanceCountdown");
     countdown_->setRange(1,std::numeric_limits<int>::max());countdown_->setValue(5);countdown_->setSuffix(" 秒");countdown_->setButtonSymbols(QAbstractSpinBox::NoButtons);form->addRow("开始倒计时",countdown_);layout->addLayout(form);
-    activate_=new QCheckBox("立即打开目标窗口");activate_->setObjectName("activatePerformanceWindow");layout->addWidget(activate_);
+    activate_=new QCheckBox("立即打开目标窗口");activate_->setObjectName("activatePerformanceWindow");activate_->setChecked(true);layout->addWidget(activate_);
     state_=text("请刷新并选择输出键盘和目标窗口。","muted");state_->setObjectName("performanceState");state_->setWordWrap(true);layout->addWidget(state_);
     layout->addStretch();auto* shortcuts=text("Ctrl+Alt+Q 暂停 / 继续\nCtrl+Alt+E 终止\n目标窗口离开前台时暂停。自动演奏期间锁定音符编辑，终止后恢复。","muted");shortcuts->setWordWrap(true);layout->addWidget(shortcuts);
 
@@ -82,7 +82,7 @@ void PerformancePanel::updatePlayMode(){
     playMode_->setIcon(playlistIcon(icons[playModeIndex_]));playMode_->setAccessibleName(names[playModeIndex_]);
     playMode_->setToolTip(names[playModeIndex_]+" · 试听与自动演奏共用\n点击切换为"+names[(playModeIndex_+1)%4]);
 }
-void PerformancePanel::cyclePlayMode(){if(running_||libraryBusy_)return;playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();}
+void PerformancePanel::cyclePlayMode(){if(libraryBusy_||(running_&&controller_.snapshot().state!=PerformanceState::Paused))return;playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();}
 bool PerformancePanel::outputReady() const{return keyboards_->currentIndex()>=0&&windows_->currentIndex()>=0;}
 QString PerformancePanel::statusText() const{return state_->text();}
 void PerformancePanel::setLibrary(QListWidget* library){
@@ -203,7 +203,7 @@ void PerformancePanel::updateControls(){
     keyboards_->setEnabled(!running_&&keyboards_->count()>0);windows_->setEnabled(!running_&&windows_->count()>0);
     activate_->setEnabled(!running_);testKeys_->setEnabled(!running_);
     countdown_->setEnabled(!running_);
-    playMode_->setEnabled(!running_&&!libraryBusy_);if(library_)library_->setEnabled(!libraryBusy_);
+    playMode_->setEnabled(canChangePlayMode());if(library_)library_->setEnabled(!libraryBusy_);
     const int count=library_?library_->count():0,row=library_?library_->currentRow():-1;
     const bool selected=!libraryBusy_&&row>=0&&row<count;
     previousSong_->setEnabled(selected&&count>1);nextSong_->setEnabled(selected&&count>1);
@@ -254,6 +254,7 @@ void PerformancePanel::beginSong(){
         OutputTarget target{keyboards_->currentData().toString(),windows_->currentData().toULongLong(),windows_->currentData(Qt::UserRole+1).toUInt()};
         // Finish local focus changes before handing the foreground to the target.
         running_=true;updateControls();emit activeChanged(true);
+        if(activate_->isChecked())emit targetActivationRequested();
         if(controller_.start(std::move(plan),target,activate_->isChecked(),error)){timer_->start();updatePerformance();return;}
     }catch(const std::exception& e){error=QString::fromUtf8(e.what());}
     queueActive_=false;running_=false;updateControls();emit activeChanged(false);

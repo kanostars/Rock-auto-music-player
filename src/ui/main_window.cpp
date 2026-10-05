@@ -311,6 +311,9 @@ void MainWindow::buildUi() {
         clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
     });
     connect(performance_,&PerformancePanel::startRequested,this,&MainWindow::togglePerformance);
+    connect(performance_,&PerformancePanel::targetActivationRequested,this,[this]{
+        if(!mini_||!mini_->isVisible())openMiniPlayer();
+    });
     connect(performance_,&PerformancePanel::activeChanged,this,[this,settings,all,none](bool active){
         settings->setEnabled(!active);tracks_->setEnabled(!active);all->setEnabled(!active);none->setEnabled(!active);
         roll_->setEditingEnabled(!active&&!timer_.isActive());if(active){addNote_->setChecked(false);deleteMode_->setChecked(false);}
@@ -322,6 +325,7 @@ void MainWindow::buildUi() {
 
 void MainWindow::togglePerformance(){
     if(busy_)return;
+    const bool wasMini=mini_&&mini_->isVisible();
     if(!performance_->active()){
         pausePreview();if(current_<0||!validateParameters())return;
         if(!performance_->outputReady()){
@@ -330,7 +334,9 @@ void MainWindow::togglePerformance(){
         }
         if(settingsPending_)applySettings();
     }
-    miniPerformance_=true;performance_->startPerformance();syncMiniPlayer();
+    miniPerformance_=true;performance_->startPerformance();
+    if(!wasMini&&!performance_->active()&&mini_&&mini_->isVisible())restoreMainWindow();
+    syncMiniPlayer();
 }
 void MainWindow::openMiniPlayer(){
     if(busy_||roll_->isEditing()||QApplication::activeModalWidget())return;
@@ -391,7 +397,7 @@ void MainWindow::syncMiniPlayer(){
     if(performance_->active())miniPerformance_=true;else if(timer_.isActive())miniPerformance_=false;
     MiniPlayerState s;s.title=current_>=0?QFileInfo(sessions_[current_].path).completeBaseName():"尚无曲目";
     s.performance=miniPerformance_;s.position=position_;s.duration=currentResult()?currentResult()->duration:0;s.busy=busy_;s.volume=volume_->value();
-    std::tie(s.rangeFirst,s.rangeLast)=selectedRange();s.mode=performance_->playMode();s.modeEnabled=!performance_->active();s.seekEnabled=current_>=0;
+    std::tie(s.rangeFirst,s.rangeLast)=selectedRange();s.mode=performance_->playMode();s.modeEnabled=performance_->canChangePlayMode();s.seekEnabled=current_>=0;
     s.detail=status_->text();s.canPlay=current_>=0&&(miniPerformance_||play_->isEnabled());
     if(miniPerformance_){
         const auto snapshot=performance_->snapshot();s.playing=performance_->active()&&(snapshot.state==PerformanceState::Playing||snapshot.state==PerformanceState::Countdown);

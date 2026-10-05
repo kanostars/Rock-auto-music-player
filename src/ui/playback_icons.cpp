@@ -4,9 +4,9 @@
 namespace rock {
 QIcon playlistIcon(PlaylistIcon kind,bool light){
     QIcon icon;
-    for(bool disabled:{false,true}){
-        QPixmap pixmap(48,48);pixmap.setDevicePixelRatio(2);pixmap.fill(Qt::transparent);
-        QPainter p(&pixmap);p.setRenderHint(QPainter::Antialiasing);
+    for(int size:{24,48})for(bool disabled:{false,true}){
+        QPixmap pixmap(size*2,size*2);pixmap.setDevicePixelRatio(2);pixmap.fill(Qt::transparent);
+        QPainter p(&pixmap);p.setRenderHint(QPainter::Antialiasing);p.scale(size/24.0,size/24.0);
         const bool mode=kind>=PlaylistIcon::Loop&&kind<=PlaylistIcon::Once;
         p.setPen(QPen(QColor(disabled?"#afbdc5":light?"#ffffff":mode?"#178e80":"#526c7c"),1.8,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
         auto line=[&](qreal x1,qreal y1,qreal x2,qreal y2){p.drawLine(QPointF(x1,y1),QPointF(x2,y2));};
@@ -51,6 +51,9 @@ QIcon playlistIcon(PlaylistIcon kind,bool light){
         }else if(kind==PlaylistIcon::Volume){
             QPainterPath path;path.moveTo(3,9);path.lineTo(7,9);path.lineTo(12,5);path.lineTo(12,19);path.lineTo(7,15);path.lineTo(3,15);path.closeSubpath();p.drawPath(path);
             p.drawArc(QRectF(10,6,10,12),-60*16,120*16);p.drawArc(QRectF(10,3,16,18),-60*16,120*16);
+        }else if(kind==PlaylistIcon::Opacity){
+            p.drawEllipse(QRectF(4,4,16,16));
+            QPainterPath half;half.moveTo(12,4);half.arcTo(QRectF(4,4,16,16),90,180);half.closeSubpath();p.fillPath(half,p.pen().color());
         }
         p.end();icon.addPixmap(pixmap,disabled?QIcon::Disabled:QIcon::Normal);
     }
