@@ -7,6 +7,8 @@
 #include "performance_panel.h"
 #include "mini_player.h"
 #include "settings_page.h"
+#include "practice_page.h"
+#include "time_seek_edit.h"
 #include "theme.h"
 #include "app/preferences.h"
 #include "platform/global_shortcut.h"
@@ -22,6 +24,7 @@
 #include <QDragEnterEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHeaderView>
@@ -33,6 +36,7 @@
 #include <QMimeData>
 #include <QMessageBox>
 #include <QProgressBar>
+#include <QResizeEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -60,11 +64,18 @@ QLabel* label(const QString& text,const char* role,QWidget* parent=nullptr) {
 QPushButton* button(const QString& text,const char* name=nullptr) {
     auto* b=new QPushButton(text);b->setCursor(Qt::PointingHandCursor);if(name)b->setObjectName(name);return b;
 }
-QString formatTime(double seconds) {
-    int ms=static_cast<int>(std::min(seconds*1000,2e9));
-    return QString("%1:%2.%3").arg(ms/60000,2,10,QChar('0')).arg(ms/1000%60,2,10,QChar('0')).arg(ms%1000/10,2,10,QChar('0'));
-}
 QString noteName(int p) {return QString::fromStdString(pitchName(p));}
+class PageHeaderLabel final:public QLabel {
+public:
+    PageHeaderLabel(){setProperty("role","brand");setTextFormat(Qt::PlainText);setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);setMinimumWidth(0);}
+    void setTitle(const QString& text){fullText_=text;setToolTip(text);refreshText();}
+protected:
+    void resizeEvent(QResizeEvent* event) override{QLabel::resizeEvent(event);refreshText();}
+    void changeEvent(QEvent* event) override{QLabel::changeEvent(event);if(event->type()==QEvent::FontChange||event->type()==QEvent::StyleChange)refreshText();}
+private:
+    QString fullText_;
+    void refreshText(){setText(QFontMetrics(font()).elidedText(fullText_,Qt::ElideRight,contentsRect().width()));}
+};
 }
 MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
     Theme::initialize();
@@ -105,7 +116,7 @@ MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
     });
     qApp->installEventFilter(this);
 }
-MainWindow::~MainWindow() {closing_=true;qApp->removeEventFilter(this);for(auto* shortcut:globalShortcuts_)shortcut->disable();miniRefresh_.stop();delete mini_;audio_.pause();if(cancel_)cancel_->store(true);importWatcher_.waitForFinished();}
+MainWindow::~MainWindow() {closing_=true;if(practicePage_)practicePage_->stop();qApp->removeEventFilter(this);for(auto* shortcut:globalShortcuts_)shortcut->disable();miniRefresh_.stop();delete mini_;audio_.pause();if(cancel_)cancel_->store(true);importWatcher_.waitForFinished();}
 const Conversion* MainWindow::currentResult() const {return current_>=0?sessions_[current_].result.get():nullptr;}
 
 void MainWindow::buildUi() {
@@ -114,13 +125,16 @@ void MainWindow::buildUi() {
     auto* outer=new QVBoxLayout(root);outerLayout_=outer;outer->setContentsMargins(22,20,22,14);outer->setSpacing(14);
     auto* header=new QFrame;header->setObjectName("header");auto* top=new QHBoxLayout(header);top->setContentsMargins(22,17,22,17);
     auto* brandBox=new QVBoxLayout;brandBox->setSpacing(5);
-    auto* logo=button("ROCK  /  九键音乐工作台","miniPlayerButton");
+    auto* logo=button("ROCK  /  九键音乐工作台","miniPlayerButton");headerLogo_=logo;
     Theme::setStyle(logo,"QPushButton {background:transparent;border:none;padding:0;text-align:left;font-size:22px;font-weight:700;color:#183d4d;} QPushButton:hover {color:#178e80;}");
     logo->setToolTip("点击 Logo 进入小窗模式");logo->setAccessibleName("Logo · 进入小窗模式");brandBox->addWidget(logo,0,Qt::AlignLeft);
     connect(logo,&QPushButton::clicked,this,&MainWindow::openMiniPlayer);
-    brandBox->addWidget(label("MIDI → NINE KEYS     ·     让每个音符找到它的位置","muted"));top->addLayout(brandBox);top->addStretch();
+    headerPageTitle_=new PageHeaderLabel;headerPageTitle_->setObjectName("pageHeaderTitle");brandBox->addWidget(headerPageTitle_);headerPageTitle_->hide();
+    headerSubtitle_=label("MIDI → NINE KEYS     ·     让每个音符找到它的位置","muted");headerSubtitle_->setObjectName("pageHeaderSubtitle");brandBox->addWidget(headerSubtitle_);top->addLayout(brandBox,1);
     import_=button("＋  导入 MIDI","importButton");import_->setMinimumWidth(154);top->addWidget(import_);outer->addWidget(header);
     settingsNavigation_=button("设置","settingsNavigation");settingsNavigation_->setCheckable(true);top->addWidget(settingsNavigation_);
+    practiceBack_=button("返回工作台","practiceBackButton");top->addWidget(practiceBack_);practiceBack_->hide();
+    connect(practiceBack_,&QPushButton::clicked,this,&MainWindow::leavePractice);
     connect(settingsNavigation_,&QPushButton::toggled,this,&MainWindow::showAppSettings);
     connect(import_,&QPushButton::clicked,this,[this]{importFiles(QFileDialog::getOpenFileNames(this,"选择 MIDI 文件",{},"MIDI 文件 (*.mid *.midi)"));});
 
@@ -212,6 +226,7 @@ void MainWindow::buildUi() {
     connect(roll_,&PianoRoll::rangeBoundaryToPlayheadRequested,this,&MainWindow::moveRangeBoundaryToPlayhead);
     auto* legend=new QHBoxLayout;auto* legendText=label("● 原样保留    ● 近似转换    ● 同键冲突","muted");legendText->setTextFormat(Qt::RichText);
     Theme::setRichText(legendText,"<span style='color:#189e91'>●</span> 同音名　<span style='color:#d5a14a'>●</span> 近似　<span style='color:#6582bd'>●</span> 已编辑　<span style='color:#d4656d'>●</span> 冲突");legend->addWidget(legendText);legend->addStretch();
+    practiceButton_=button("跟练练习","practiceButton");practiceButton_->setEnabled(false);practiceButton_->setToolTip("进入当前曲目的自动预览与按组跟弹练习");Theme::setStyle(practiceButton_,"padding:6px 10px;");legend->addWidget(practiceButton_);connect(practiceButton_,&QPushButton::clicked,this,&MainWindow::openPractice);
     auto* minus=button("−");auto* plus=button("＋");minus->setFixedWidth(34);plus->setFixedWidth(34);zoomText_=label("80 px/s","muted");legend->addWidget(minus);legend->addWidget(zoomText_);legend->addWidget(plus);cl->addLayout(legend);
     connect(minus,&QPushButton::clicked,this,[this]{roll_->setZoom(roll_->zoom()/1.4);});connect(plus,&QPushButton::clicked,this,[this]{roll_->setZoom(roll_->zoom()*1.4);});
     zoomText_->setMinimumWidth(64);
@@ -277,7 +292,8 @@ void MainWindow::buildUi() {
 
     auto* transport=new QFrame;transportPanel_=transport;transport->setObjectName("transport");auto* tl=new QHBoxLayout(transport);tl->setContentsMargins(16,12,16,12);
     play_=button("手碟试听","playButton");play_->setEnabled(false);stop_=button("停止","stopButton");stop_->setEnabled(false);tl->addWidget(play_);tl->addWidget(stop_);
-    clock_=label("00:00.00 / 00:00.00","section");clock_->setObjectName("previewClock");tl->addSpacing(16);tl->addWidget(clock_);
+    clock_=new TimeSeekEdit;clock_->setProperty("role","section");clock_->setObjectName("previewClock");tl->addSpacing(16);tl->addWidget(clock_);
+    connect(clock_,&TimeSeekEdit::seekRequested,this,&MainWindow::seekPreviewTime);
     tl->addWidget(performance_->transportControls());performance_->transportControls()->show();
     tl->addStretch();summary_=label("等待导入","muted");
     tl->addWidget(label("音量","muted"));auto* volume=new QSlider(Qt::Horizontal);volume_=volume;volume->setObjectName("volumeSlider");volume->setRange(0,100);volume->setValue(60);volume->setFixedWidth(70);volume->setToolTip("试听音量 60%（0 为静音）");tl->addWidget(volume);
@@ -292,6 +308,7 @@ void MainWindow::buildUi() {
     statusLine->addWidget(summary_);outer->addWidget(statusPanel_);
     appSettings_=new SettingsPage;outer->insertWidget(2,appSettings_,1);appSettings_->hide();
     connect(performance_,&PerformancePanel::activeChanged,appSettings_,&SettingsPage::setPerformanceActive);
+    practicePage_=new PracticePage;outer->insertWidget(2,practicePage_,1);practicePage_->hide();
 
     connect(performance_,&PerformancePanel::songChangeRequested,this,[this](int row){if(!busy_)library_->setCurrentRow(row);});
     connect(performance_,&PerformancePanel::previewStartRequested,this,[this]{pausePreview(true);startPreview();});
@@ -301,7 +318,7 @@ void MainWindow::buildUi() {
         position_=std::clamp(seconds,0.0,currentResult()?currentResult()->duration:0.0);
         roll_->setPlayhead(position_,true);
         // Publish the shared position without feeding it back into the output controller.
-        clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
+        clock_->setPosition(position_,currentResult()?currentResult()->duration:0);
     });
     connect(performance_,&PerformancePanel::startRequested,this,&MainWindow::togglePerformance);
     connect(performance_,&PerformancePanel::targetActivationRequested,this,[this]{
@@ -318,9 +335,42 @@ void MainWindow::buildUi() {
 }
 
 void MainWindow::showAppSettings(bool show){
+    if(show)clock_->cancelEditing();
+    if(practicePage_&&practicePage_->isVisible())leavePractice();
     if(show&&trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
     workspace_->setVisible(!show);appSettings_->setVisible(show);transportPanel_->setVisible(!show);statusPanel_->setVisible(!show);import_->setVisible(!show);
     settingsNavigation_->setText(show?"返回工作台":"设置");
+    if(show)setPageHeader("设置","外观即时生效；快捷键保存后生效，重启程序后会保留。");else setPageHeader();
+    setMinimumWidth(std::max(1120,centralWidget()->minimumSizeHint().width()));
+}
+void MainWindow::setPageHeader(const QString& title,const QString& subtitle){
+    const bool page=!title.isEmpty();headerLogo_->setVisible(!page);headerPageTitle_->setVisible(page);
+    static_cast<PageHeaderLabel*>(headerPageTitle_)->setTitle(title);
+    headerSubtitle_->setText(page?subtitle:QString("MIDI → NINE KEYS     ·     让每个音符找到它的位置"));
+}
+void MainWindow::openPractice(){
+    if(current_<0||busy_||performance_->active()||roll_->isEditing())return;
+    if(settingsPending_){showWarning("请先应用参数","转换参数已修改，请先应用设置，再进入歌曲练习。");return;}
+    const auto& session=sessions_[current_];
+    if(!session.result||!std::any_of(session.result->notes.begin(),session.result->notes.end(),[](const auto& note){return note.target>=0&&note.target<9;})){
+        showWarning("暂无可练习音符","当前曲目没有可弹的九键音符，请检查音轨和转换设置。");return;
+    }
+    clock_->cancelEditing();pausePreview();if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
+    addNote_->setChecked(false);deleteMode_->setChecked(false);
+    practicePage_->setSong(QFileInfo(session.path).completeBaseName(),std::make_shared<Song>(*session.song),
+                           std::make_shared<Conversion>(*session.result),session.settings);
+    practicePage_->setVolume(volume_->value());
+    workspace_->hide();appSettings_->hide();transportPanel_->hide();statusPanel_->hide();import_->hide();settingsNavigation_->hide();
+    setPageHeader(practicePage_->pageTitle(),practicePage_->pageSubtitle());practiceBack_->show();
+    practicePage_->show();practicePage_->setFocus();updateGlobalShortcuts();
+    setMinimumWidth(std::max(1120,centralWidget()->minimumSizeHint().width()));
+}
+void MainWindow::leavePractice(){
+    if(!practicePage_||!practicePage_->isVisible())return;
+    practicePage_->stop();const auto [first,last]=selectedRange();position_=std::clamp(practicePage_->position(),first,last);
+    practicePage_->hide();workspace_->show();transportPanel_->show();statusPanel_->show();import_->show();settingsNavigation_->show();
+    practiceBack_->hide();setPageHeader();
+    roll_->setPlayhead(position_,true);refreshClock();updateGlobalShortcuts();updateEditActions();
 }
 void MainWindow::updateShortcuts(){
     updateGlobalShortcuts();
@@ -337,8 +387,8 @@ void MainWindow::updateShortcuts(){
     if(current_>=0)showNote(roll_->selectedSource());
 }
 void MainWindow::updateGlobalShortcuts(){
-    bool inhibited=closing_||QApplication::activeModalWidget();
-    for(auto* focus=QApplication::focusWidget();focus;focus=focus->parentWidget())if(qobject_cast<QKeySequenceEdit*>(focus)){inhibited=true;break;}
+    bool inhibited=closing_||QApplication::activeModalWidget()||(practicePage_&&practicePage_->isVisible());
+    for(auto* focus=QApplication::focusWidget();focus;focus=focus->parentWidget())if(qobject_cast<QKeySequenceEdit*>(focus)||qobject_cast<TimeSeekEdit*>(focus)){inhibited=true;break;}
     constexpr ShortcutAction actions[]{ShortcutAction::PerformancePrevious,ShortcutAction::PerformanceNext,ShortcutAction::MiniMode};
     auto& preferences=Preferences::instance();
     // Release all changed combinations first so users can swap two bindings.
@@ -368,7 +418,8 @@ void MainWindow::togglePerformance(){
     syncMiniPlayer();
 }
 void MainWindow::openMiniPlayer(){
-    if(busy_||roll_->isEditing()||QApplication::activeModalWidget())return;
+    if(busy_||roll_->isEditing()||QApplication::activeModalWidget()||(practicePage_&&practicePage_->isVisible()))return;
+    clock_->cancelEditing();
     if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
     if(!mini_){
         mini_=new MiniPlayer(library_);
@@ -500,6 +551,7 @@ void MainWindow::restoreTrackPanel() {
 }
 bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
     if(watched==trackWindow_&&event->type()==QEvent::Close)restoreTrackPanel();
+    if(practicePage_&&practicePage_->isVisible())return QMainWindow::eventFilter(watched,event);
     if(!closing_&&(event->type()==QEvent::ShortcutOverride||event->type()==QEvent::KeyPress||event->type()==QEvent::KeyRelease)){
         auto* widget=qobject_cast<QWidget*>(watched);auto* key=static_cast<QKeyEvent*>(event);
         const auto* window=widget?widget->window():nullptr;
@@ -524,7 +576,9 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
     return QMainWindow::eventFilter(watched,event);
 }
 void MainWindow::closeEvent(QCloseEvent* event) {
+    clock_->cancelEditing();
     closing_=true;for(auto* shortcut:globalShortcuts_)shortcut->disable();
+    if(practicePage_)practicePage_->stop();
     performance_->stopPerformance();
     miniRefresh_.stop();audio_.pause();timer_.stop();if(mini_)mini_->hide();
     if(trackWindow_)trackWindow_->close();
@@ -533,7 +587,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 void MainWindow::importFiles(const QStringList& paths) {
     if(paths.isEmpty()||busy_)return;
+    if(practicePage_&&practicePage_->isVisible())leavePractice();
     if(auto* prompt=findChild<QMessageBox*>("importConflictDialog");prompt&&prompt->isVisible())return;
+    clock_->cancelEditing();
     performance_->stopPerformance();performance_->setLibraryBusy(true);
     pausePreview();busy_=true;import_->setEnabled(false);updateEditActions();workspace_->setEnabled(false);editorPanel_->setEnabled(false);progress_->show();cancelButton_->show();
     status_->setText("正在读取 MIDI 并转换九键音符…");cancel_=std::make_shared<std::atomic_bool>(false);
@@ -601,6 +657,8 @@ void MainWindow::promptImportConflicts(int firstImported){
 }
 void MainWindow::selectSong(int index) {
     if(busy_||index<0||index>=static_cast<int>(sessions_.size()))return;
+    clock_->cancelEditing();
+    if(practicePage_&&practicePage_->isVisible())leavePractice();
     performance_->stopPerformance();
     pausePreview(true);current_=index;updating_=true;deleteMode_->setChecked(false);addNote_->setChecked(false);
     const auto& s=sessions_[index];const auto& settings=s.settings;
@@ -632,6 +690,7 @@ void MainWindow::moveSong(int from,int to){
 }
 void MainWindow::removeSong(int index){
     if(busy_||index<0||index>=static_cast<int>(sessions_.size()))return;
+    clock_->cancelEditing();
     performance_->stopPerformance();pausePreview();
     const bool removedCurrent=index==current_;
     {const QSignalBlocker blocker(library_);
@@ -644,6 +703,7 @@ void MainWindow::removeSong(int index){
     else performance_->stopPerformance();
 }
 void MainWindow::clearSong(){
+    clock_->cancelEditing();
     current_=-1;updating_=true;settingsPending_=false;position_=0;
     {const QSignalBlocker blocker(performance_);performance_->setSong({}, {}, {}, {});}
     tracks_->clear();filter_->clear();filter_->addItem("全部音轨",-1);
@@ -878,8 +938,18 @@ void MainWindow::pausePreview(bool reset) {
     if(reset){position_=selectedRange().first;roll_->setPlayhead(position_);}refreshClock();
 }
 void MainWindow::refreshClock() {
-    clock_->setText(formatTime(position_)+" / "+formatTime(currentResult()?currentResult()->duration:0));
+    clock_->setPosition(position_,currentResult()?currentResult()->duration:0);
     if(performance_){const QSignalBlocker blocker(performance_);performance_->setPreviewPosition(position_);}
+}
+void MainWindow::seekPreviewTime(double seconds) {
+    if(!currentResult()||busy_||roll_->isEditing()||!std::isfinite(seconds))return;
+    if(performance_->active()){
+        performance_->beginSeek();performance_->seekPerformance(seconds);return;
+    }
+    const bool resume=timer_.isActive();pausePreview();
+    const auto [first,last]=selectedRange();position_=std::clamp(seconds,first,last);
+    roll_->setPlayhead(position_,true);refreshClock();
+    if(resume&&position_<last)startPreview();
 }
 void MainWindow::addNote(double start,int target) {
     if(performance_->active())return;
@@ -991,6 +1061,8 @@ void MainWindow::updateEditActions() {
     exportMidi_->setEnabled(hasSong&&!busy_&&(!performance_||!performance_->active()));
     copyHandScore_->setEnabled(exportMidi_->isEnabled());
     copyKeyScore_->setEnabled(exportMidi_->isEnabled());
+    practiceButton_->setEnabled(hasSong&&!busy_&&(!performance_||!performance_->active()));
+    clock_->setEnabled(hasSong&&!busy_&&!roll_->isEditing());
     resetRange_->setEnabled(editable&&!busy_);
     deleteRange_->setEnabled(editable&&!busy_&&selectedRange().second>selectedRange().first);
     createRange_->setEnabled(deleteRange_->isEnabled());

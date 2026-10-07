@@ -72,7 +72,23 @@ const QString baseStyle=QString::fromUtf8(R"(
         QTableWidget {background: white; border: 1px solid #e0e9ed; gridline-color: #eef3f5;}
         QToolTip {background: #203d4e; color: white; padding: 6px; border: none;}
         QScrollArea#appSettingsScroll, QScrollArea#appSettingsScroll > QWidget > QWidget {background:#eef3f5;}
-        QPushButton#settingsNavigation:checked {background:#e5f3ef;color:#0e796c;border-color:#8ac8bb;}
+        QFrame#settingsTestCard {background:#e8f4f1;border:1px solid #badfd5;border-radius:10px;}
+        QFrame[shortcutGroup=true] {background:#f7fafb;border:1px solid #e0e9ed;border-radius:8px;}
+        QLabel[role=settingsTitle] {font-size:15px;font-weight:700;}
+        QLabel[role=shortcutName] {font-weight:600;}
+        QWidget#appSettingsPage QKeySequenceEdit {background:transparent;border:none;padding:0;min-height:0;}
+        QWidget#appSettingsPage QKeySequenceEdit QLineEdit {background:white;border:1px solid #dce5eb;border-radius:6px;padding:5px 7px;min-height:20px;}
+        QWidget#appSettingsPage QKeySequenceEdit QLineEdit:focus {border-color:#178e80;}
+        QWidget#appSettingsPage QKeySequenceEdit QLineEdit:disabled {background:#f5f7f8;color:#afbdc5;border-color:#e6edf0;}
+        QWidget#appSettingsPage QPushButton[primary=true]:disabled {background:#c5dcd7;color:#8397a3;border-color:#c5dcd7;}
+        QPushButton#settingsNavigation:checked, QPushButton#practiceBackButton {background:#e5f3ef;color:#0e796c;border-color:#8ac8bb;}
+        QFrame#practiceTransport, QFrame#practicePrompt {background:white;border:1px solid #e0e9ed;border-radius:10px;}
+        QWidget#practicePage QPushButton:checked {background:#e5f3ef;color:#0e796c;border-color:#8ac8bb;}
+        QWidget#practicePage QPushButton#practicePlayButton {border-radius:23px;padding:8px;}
+        QWidget#practicePage QSlider::groove:horizontal {height:6px;background:#e6edf0;border-radius:3px;}
+        QWidget#practicePage QSlider::sub-page:horizontal {background:#178e80;border-radius:3px;}
+        QWidget#practicePage QSlider::handle:horizontal {background:#178e80;border:1px solid #178e80;width:14px;margin:-4px 0;border-radius:7px;}
+        QLabel[role=practiceKey] {font-size:12px;font-weight:600;}
         QPlainTextEdit {background:white;border:1px solid #dce6eb;border-radius:6px;padding:6px;}
 )");
 void titleTheme(QWidget* widget){

@@ -9,7 +9,8 @@ class AudioPlayer {
 public:
     AudioPlayer();
     ~AudioPlayer();
-    bool play(const Song& song,const Conversion& result,double seconds,QString& error,double end=-1);
+    // Positions remain in the conversion's timeline; speed changes strike timing, not sample pitch.
+    bool play(const Song& song,const Conversion& result,double seconds,QString& error,double end=-1,double speed=1,bool allowConflicts=false);
     void pause();
     void setVolume(float volume);
     double position() const;

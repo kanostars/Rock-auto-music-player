@@ -10,6 +10,8 @@ class HandpanBoard : public QWidget {
 public:
     explicit HandpanBoard(QWidget* parent=nullptr);
     void setHighlighted(int target,bool value);
+    void setPracticeLayout(bool enabled);
+    void setKeyLabels(const std::array<int,9>& keyLabels);
 signals:
     void padPressed(int target);
     void padReleased(int target);
@@ -19,7 +21,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
 private:
     std::array<bool,9> held_{};
+    std::array<int,9> keyLabels_{};
     int mouseTarget_{-1};
+    bool practiceLayout_{};
     QTransform boardTransform() const;
 };
 class HandpanTestDialog : public QDialog {

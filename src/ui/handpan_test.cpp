@@ -2,9 +2,7 @@
 #include "theme.h"
 #include <QApplication>
 #include <QDateTime>
-#include <QKeyEvent>
 #include <QLabel>
-#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPlainTextEdit>
@@ -15,6 +13,7 @@
 namespace rock {
 namespace {
 const std::array<QPointF,9> centers{{{698,593},{172,376},{435,376},{698,376},{961,376},{1225,376},{435,160},{698,160},{961,160}}};
+const std::array<QPointF,9> practiceCenters{{{698,1110},{172,650},{435,650},{698,650},{961,650},{1225,650},{435,200},{698,200},{961,200}}};
 void polygon(QPainter& p,const QColor& color,std::initializer_list<QPointF> points){p.setBrush(color);p.drawPolygon(QPolygonF(QVector<QPointF>(points)));}
 void numeral(QPainter& p,int number) {
     const QColor ink("#282a25");p.setPen(Qt::NoPen);
@@ -43,31 +42,40 @@ void numeral(QPainter& p,int number) {
     }
 }
 }
-HandpanBoard::HandpanBoard(QWidget* parent):QWidget(parent){setObjectName("handpanBoard");setMinimumSize(650,270);setMaximumHeight(270);setFocusPolicy(Qt::StrongFocus);setAccessibleName("九键手碟，T Y U / F G H J K / B");}
+HandpanBoard::HandpanBoard(QWidget* parent):QWidget(parent){setObjectName("handpanBoard");setMinimumSize(650,270);setMaximumHeight(270);setFocusPolicy(Qt::StrongFocus);std::copy(keys.begin(),keys.end(),keyLabels_.begin());setAccessibleName("九键手碟，T Y U / F G H J K / B");}
 QTransform HandpanBoard::boardTransform() const {
-    double scale=std::min(width()/1397.0,height()/740.0);QTransform transform;transform.translate((width()-1397*scale)/2,(height()-740*scale)/2);transform.scale(scale,scale);return transform;
+    const double logicalHeight=practiceLayout_?1320:740;
+    double scale=std::min(width()/1397.0,height()/logicalHeight);QTransform transform;transform.translate((width()-1397*scale)/2,(height()-logicalHeight*scale)/2);transform.scale(scale,scale);return transform;
 }
-void HandpanBoard::setHighlighted(int target,bool value){if(target>=0&&target<9){held_[target]=value;update();}}
+void HandpanBoard::setHighlighted(int target,bool value){if(target>=0&&target<9&&held_[target]!=value){held_[target]=value;update();}}
+void HandpanBoard::setPracticeLayout(bool enabled){practiceLayout_=enabled;setMinimumSize(enabled?280:650,enabled?200:270);setMaximumHeight(enabled?QWIDGETSIZE_MAX:270);update();}
+void HandpanBoard::setKeyLabels(const std::array<int,9>& keyLabels){
+    if(keyLabels_==keyLabels)return;
+    keyLabels_=keyLabels;
+    QStringList labels;for(int target:{6,7,8,1,2,3,4,5,0})labels.append(QString(QChar(keyLabels_[target])));
+    setAccessibleName(QString("九键手碟，%1 %2 %3 / %4 %5 %6 %7 %8 / %9").arg(labels[0],labels[1],labels[2],labels[3],labels[4],labels[5],labels[6],labels[7],labels[8]));update();
+}
 void HandpanBoard::paintEvent(QPaintEvent*) {
     QPainter p(this);p.setRenderHint(QPainter::Antialiasing);
     QLinearGradient background(0,0,width(),height());background.setColorAt(0,QColor("#22213f"));background.setColorAt(.65,QColor("#2d294b"));background.setColorAt(1,QColor("#23213e"));
     p.setPen(Qt::NoPen);p.setBrush(background);p.drawRoundedRect(QRectF(rect()),10,10);p.setTransform(boardTransform());
-    p.setPen(QPen(QColor(240,232,202,40),2.4));for(int y:{121,337,553})for(int i=0;i<5;++i)p.drawLine(QPointF(40,y+i*16),QPointF(1357,y+i*16));
+    p.setPen(QPen(QColor(240,232,202,40),2.4));for(int y:practiceLayout_?std::array<int,3>{145,595,1055}:std::array<int,3>{121,337,553})for(int i=0;i<5;++i)p.drawLine(QPointF(40,y+i*16),QPointF(1357,y+i*16));
     p.setPen(Qt::NoPen);p.setBrush(QColor(240,232,202,65));
-    for(int i=0;i<32;++i){double x=42+(i*173)%1310,y=30+(i*97)%680;p.drawEllipse(QPointF(x,y),2.6,2.6);}
+    for(int i=0;i<32;++i){double x=42+(i*173)%1310,y=30+(i*97)%(practiceLayout_?1240:680);p.drawEllipse(QPointF(x,y),2.6,2.6);}
     const std::array<int,9> numbers{6,3,4,5,6,7,1,2,3};
     for(int target=0;target<9;++target) {
-        p.save();p.translate(centers[target]);
+        p.save();p.translate((practiceLayout_?practiceCenters:centers)[target]);if(practiceLayout_)p.scale(1.45,1.45);
         if(held_[target]){p.setBrush(QColor(255,222,141,45));p.drawEllipse(QPointF(0,0),79,79);p.setBrush(QColor("#ffcf6e"));p.drawEllipse(QPointF(0,0),71,71);}
         p.setBrush(held_[target]?QColor("#fffced"):QColor("#f7f1dc"));p.drawEllipse(QPointF(0,0),66,66);numeral(p,numbers[target]);
         p.setBrush(QColor("#282a25"));if(target>=6)p.drawEllipse(QPointF(0,-43),6.5,6.5);if(target==0)p.drawEllipse(QPointF(0,54),6.5,6.5);
-        p.setBrush(held_[target]?QColor("#ffcf6e"):QColor("#f7f1dc"));p.drawEllipse(QPointF(0,94),16.5,16.5);
-        p.setPen(QColor("#282a25"));QFont font("Georgia");font.setPixelSize(18);p.setFont(font);p.drawText(QRectF(-16,78,32,32),Qt::AlignCenter,QString(QChar(keys[target])));p.restore();
+        p.setBrush(held_[target]?QColor("#ffcf6e"):QColor("#f7f1dc"));const double keyRadius=practiceLayout_?25:16.5,keyY=practiceLayout_?105:94;p.drawEllipse(QPointF(0,keyY),keyRadius,keyRadius);
+        p.setPen(QColor("#282a25"));QFont font("Georgia");font.setPixelSize(practiceLayout_?34:18);p.setFont(font);p.drawText(QRectF(-keyRadius,keyY-keyRadius,keyRadius*2,keyRadius*2),Qt::AlignCenter,QString(QChar(keyLabels_[target])));p.restore();
     }
 }
 void HandpanBoard::mousePressEvent(QMouseEvent* event) {
     if(event->button()!=Qt::LeftButton)return;setFocus();const auto position=boardTransform().inverted().map(event->position());
-    for(int target=0;target<9;++target){auto d=position-centers[target];if(d.x()*d.x()+d.y()*d.y()<=66*66){mouseTarget_=target;emit padPressed(target);event->accept();return;}}
+    const double radius=practiceLayout_?66*1.45:66;
+    for(int target=0;target<9;++target){auto d=position-(practiceLayout_?practiceCenters:centers)[target];if(d.x()*d.x()+d.y()*d.y()<=radius*radius){mouseTarget_=target;emit padPressed(target);event->accept();return;}}
 }
 void HandpanBoard::mouseReleaseEvent(QMouseEvent* event) {
     if(event->button()==Qt::LeftButton&&mouseTarget_>=0){int target=mouseTarget_;mouseTarget_=-1;emit padReleased(target);event->accept();}

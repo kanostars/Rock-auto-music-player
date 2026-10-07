@@ -3,6 +3,19 @@
 #include <stdexcept>
 #include <limits>
 namespace rock {
+namespace {
+using SignatureMap=std::map<int,std::pair<int,int>>;
+void setSignatures(Song& song,const SignatureMap& signatures){
+    song.timeSignatures.clear();
+    for(const auto& [tick,signature]:signatures){
+        if(!song.timeSignatures.empty()){
+            const auto& previous=song.timeSignatures.back();
+            if(previous.numerator==signature.first&&previous.denominator==signature.second)continue;
+        }
+        song.timeSignatures.push_back({tick,signature.first,signature.second});
+    }
+}
+}
 double secondsAtTick(const Song& song,const Settings& settings,int tick){
     return (settings.fixedTempo?double(tick)/song.ppq*60/settings.bpm:song.secondsAt(tick))/settings.speed;
 }
@@ -28,6 +41,13 @@ void deleteTimeRange(Song& song,NoteEdits& edits,int first,int last){
         if(t.tick<first)tempos[t.tick]=t.micros;else if(t.tick>=last)tempos[shift(t.tick)]=t.micros;}
     tempos[first]=atEnd;song.tempos.clear();
     for(auto [tick,micros]:tempos){const double seconds=song.secondsAt(tick);song.tempos.push_back({tick,micros,seconds});}
+    SignatureMap signatures{{0,{4,4}}};std::pair<int,int> signatureAtEnd{4,4};
+    for(const auto& signature:song.timeSignatures){
+        if(signature.tick<=last)signatureAtEnd={signature.numerator,signature.denominator};
+        if(signature.tick<first)signatures[signature.tick]={signature.numerator,signature.denominator};
+        else if(signature.tick>=last)signatures[shift(signature.tick)]={signature.numerator,signature.denominator};
+    }
+    signatures[first]=signatureAtEnd;setSignatures(song,signatures);
     song.endTick=shift(song.endTick);
 }
 void insertBlankRange(Song& song,NoteEdits& edits,int first,int last){
@@ -41,6 +61,7 @@ void insertBlankRange(Song& song,NoteEdits& edits,int first,int last){
         if(a<first&&b>first&&!(n.added&&it==edits.end())&&(it==edits.end()||!it->second.deleted))++splits;
     }
     for(const auto& t:song.tempos)checked(t.tick);
+    for(const auto& signature:song.timeSignatures)checked(signature.tick);
     if(count+splits>200000)throw std::invalid_argument("插入时拆分音符将超过每曲目 20 万音符上限。");
     song.notes.reserve(count+splits);
     for(size_t i=0;i<count;++i){auto& n=song.notes[i];auto it=edits.find(static_cast<int>(i));
@@ -64,6 +85,14 @@ void insertBlankRange(Song& song,NoteEdits& edits,int first,int last){
         else {tempos[t.tick+length]=t.micros;if(t.tick<last)tempos[t.tick]=t.micros;}}
     tempos[first]=atStart;tempos[last]=atStart;song.tempos.clear();
     for(auto [tick,micros]:tempos){const double seconds=song.secondsAt(tick);song.tempos.push_back({tick,micros,seconds});}
+    SignatureMap signatures{{0,{4,4}}};std::pair<int,int> signatureAtStart{4,4};
+    for(const auto& signature:song.timeSignatures){
+        if(signature.tick<=first)signatureAtStart={signature.numerator,signature.denominator};
+        const std::pair value{signature.numerator,signature.denominator};
+        if(signature.tick<first)signatures[signature.tick]=value;
+        else {signatures[signature.tick+length]=value;if(signature.tick<last)signatures[signature.tick]=value;}
+    }
+    signatures[first]=signatureAtStart;signatures[last]=signatureAtStart;setSignatures(song,signatures);
     song.endTick=std::max(song.endTick,first)+length;
 }
 Conversion playbackRange(const Conversion& source,double start,double end,const Settings& settings){

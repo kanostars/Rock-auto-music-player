@@ -9,9 +9,33 @@
 #include <QToolTip>
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <iterator>
 
 namespace rock {
+namespace {
+// Bar boundaries may fall between integer ticks (for example at low PPQ in
+// compound meters), so the ruler keeps the fractional tick until painting.
+double barSeconds(const Song& song,const Settings& settings,double tick){
+    if(settings.fixedTempo)return tick/song.ppq*60/settings.bpm/settings.speed;
+    auto tempo=std::upper_bound(song.tempos.begin(),song.tempos.end(),tick,[](double t,const Tempo& value){return t<value.tick;});
+    if(tempo==song.tempos.begin())return tick*.5/song.ppq/settings.speed;
+    --tempo;return (tempo->seconds+(tick-tempo->tick)*tempo->micros/(song.ppq*1000000.0))/settings.speed;
+}
+double barTick(const Song& song,const Settings& settings,double seconds){
+    seconds=std::max(0.0,seconds)*settings.speed;
+    double tick;
+    if(settings.fixedTempo)tick=seconds*song.ppq*settings.bpm/60;
+    else {
+        auto tempo=std::upper_bound(song.tempos.begin(),song.tempos.end(),seconds,[](double t,const Tempo& value){return t<value.seconds;});
+        if(tempo==song.tempos.begin())tick=seconds*song.ppq*2;
+        else {--tempo;tick=tempo->tick+(seconds-tempo->seconds)*song.ppq*1000000.0/tempo->micros;}
+    }
+    return std::clamp(tick,0.0,double(std::numeric_limits<int>::max()));
+}
+}
 PianoRoll::PianoRoll(QWidget* parent):QAbstractScrollArea(parent) {
+    std::copy(keys.begin(),keys.end(),practiceKeys_.begin());
     setObjectName("pianoRoll"); setFrameShape(QFrame::NoFrame);
     setMouseTracking(true); viewport()->setMouseTracking(true);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
@@ -30,10 +54,72 @@ PianoRoll::PianoRoll(QWidget* parent):QAbstractScrollArea(parent) {
 }
 void PianoRoll::setMusic(std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result) {
     cancelGesture();
-    song_=std::move(song);result_=std::move(result);selection_.clear();selected_=-1; updateRange(); viewport()->update();
+    song_=std::move(song);result_=std::move(result);selection_.clear();selected_=-1;rebuildBars();updateRange();viewport()->update();
 }
-void PianoRoll::setTrackFilter(int track) {cancelGesture();filter_=track;selection_.clear();notifySelection();}
-int PianoRoll::rowHeight() const {return std::max(14,(viewport()->height()-top_)/10);}
+void PianoRoll::setPracticeMode(bool enabled,const Settings& settings){
+    if(practiceMode_!=enabled){
+        cancelGesture();selection_.clear();selected_=-1;
+        if(enabled)editingBeforePractice_=editingEnabled_;
+        practiceMode_=enabled;
+        setEditingEnabled(enabled?false:editingBeforePractice_);
+        if(enabled){filter_=-1;deleteMode_=false;setAddMode(false);}
+    }
+    practiceSettings_=settings;rebuildBars();updateRange();viewport()->update();
+}
+void PianoRoll::setPracticeKeys(const std::array<int,9>& keyLabels){
+    if(practiceKeys_==keyLabels)return;
+    practiceKeys_=keyLabels;viewport()->update();
+}
+void PianoRoll::setTrackFilter(int track) {if(practiceMode_)return;cancelGesture();filter_=track;selection_.clear();notifySelection();}
+int PianoRoll::rowHeight() const {return std::max(14,(viewport()->height()-top_)/(practiceMode_?9:10));}
+void PianoRoll::rebuildBars(){
+    bars_.clear();if(!song_||song_->ppq<=0)return;
+    BarSegment segment{0,std::numeric_limits<double>::infinity(),song_->ppq*4.0,1};
+    int numerator=4,denominator=4;
+    for(const auto& signature:song_->timeSignatures){
+        if(signature.tick<0||signature.numerator<=0||signature.denominator<=0||signature.tick<segment.first)continue;
+        if(signature.numerator==numerator&&signature.denominator==denominator)continue;
+        if(signature.tick>segment.first){
+            segment.last=signature.tick;bars_.push_back(segment);
+            const auto count=static_cast<quint64>(std::max(1.0,std::ceil((segment.last-segment.first)/segment.length-1e-9)));
+            segment.number+=count;
+        }
+        numerator=signature.numerator;denominator=signature.denominator;
+        segment.first=signature.tick;segment.last=std::numeric_limits<double>::infinity();
+        segment.length=double(song_->ppq)*4*numerator/denominator;
+    }
+    bars_.push_back(segment);
+}
+void PianoRoll::drawPracticeRuler(QPainter& painter,double left,int width,int height){
+    if(!song_||bars_.empty()||!std::isfinite(practiceSettings_.speed)||!std::isfinite(practiceSettings_.bpm)||
+       practiceSettings_.speed<=0||practiceSettings_.bpm<=0)return;
+    double tick=barTick(*song_,practiceSettings_,left);
+    const int limit=std::max(1,(width-gutter_)/24+3);
+    double lastLabel=-1000;
+    painter.save();painter.setClipRect(gutter_,0,std::max(0,width-gutter_),height);
+    // Jump through screen positions rather than iterating over all measures.
+    // Even hour-long or densely metered songs only paint a viewport of labels.
+    for(int line=0;line<limit;++line){
+        auto segment=std::upper_bound(bars_.begin(),bars_.end(),tick,[](double value,const BarSegment& bar){return value<bar.first;});
+        if(segment==bars_.begin())segment=bars_.begin();else --segment;
+        double index=std::max(0.0,std::ceil((tick-segment->first)/segment->length-1e-9));
+        double boundary=segment->first+index*segment->length;
+        if(boundary>=segment->last-1e-9&&std::next(segment)!=bars_.end()){
+            ++segment;boundary=segment->first;index=0;
+        }
+        const double time=barSeconds(*song_,practiceSettings_,boundary),x=gutter_+(time-left)*pixels_;
+        if(!std::isfinite(x)||x>width)break;
+        painter.setPen(Theme::color("#dce6eb"));painter.drawLine(QPointF(x,top_),QPointF(x,height));
+        if(x-lastLabel>=90){
+            painter.setPen(Theme::color("#627c8a"));painter.setFont(QFont("Microsoft YaHei UI",9));
+            painter.drawText(QRectF(x+7,9,110,22),QString("第 %1 小节").arg(segment->number+static_cast<quint64>(index)));
+            lastLabel=x;
+        }
+        tick=std::max(boundary+std::max(1e-6,segment->length*1e-8),barTick(*song_,practiceSettings_,time+24/pixels_));
+        if(tick>std::numeric_limits<int>::max())break;
+    }
+    painter.restore();
+}
 void PianoRoll::updateRange() {
     double width=(result_?result_->duration:12)*pixels_+40;
     horizontalScrollBar()->setPageStep(std::max(1,viewport()->width()-gutter_));
@@ -61,6 +147,7 @@ void PianoRoll::selectSource(int source,bool reveal) {
 }
 void PianoRoll::selectSources(const std::set<int>& sources,bool reveal) {
     selection_.clear();
+    if(practiceMode_){selected_=-1;viewport()->update();return;}
     for(int source:sources)if(result_&&source>=0&&source<static_cast<int>(result_->notes.size())&&visibleNote(result_->notes[source]))selection_.insert(source);
     selected_=selection_.empty()?-1:*selection_.begin();
     if(reveal&&selected_>=0) {
@@ -78,6 +165,8 @@ QRectF PianoRoll::selectionRect() const {
     return QRectF(anchor,lastPointer_).normalized();
 }
 bool PianoRoll::visibleNote(const MappedNote& n) const {
+    if(practiceMode_)return n.target>=0&&n.target<static_cast<int>(keys.size())&&
+        n.mapping!=Mapping::Excluded&&n.mapping!=Mapping::Deleted&&n.mapping!=Mapping::Skipped&&n.mapping!=Mapping::ConflictSkipped;
     return n.mapping!=Mapping::Excluded && n.mapping!=Mapping::Deleted && (filter_<0||song_->notes[n.source].track==filter_);
 }
 QRectF PianoRoll::noteRect(const MappedNote& n) const {
@@ -91,7 +180,7 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     QPainter p(viewport()); p.setRenderHint(QPainter::Antialiasing);
     p.fillRect(viewport()->rect(),Theme::color("#ffffff"));
     const int w=viewport()->width(),h=viewport()->height(),rh=rowHeight();
-    for(int r=0;r<10;++r) {
+    for(int r=0;r<(practiceMode_?9:10);++r) {
         p.fillRect(gutter_,top_+r*rh,w-gutter_,rh,Theme::color(r%2?"#f5f8fa":"#fcfdfd"));
         p.setPen(Theme::color("#e6edef"));p.drawLine(gutter_,top_+(r+1)*rh,w,top_+(r+1)*rh);
     }
@@ -99,7 +188,8 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     double step=std::pow(10,std::floor(std::log10(85/pixels_)));
     while(step*pixels_<70) step*=2;
     p.setFont(QFont("Segoe UI",9));
-    for(double t=std::ceil(left/step)*step;t<left+(w-gutter_)/pixels_;t+=step) {
+    if(practiceMode_)drawPracticeRuler(p,left,w,h);
+    else for(double t=std::ceil(left/step)*step;t<left+(w-gutter_)/pixels_;t+=step) {
         double x=gutter_+(t-left)*pixels_;
         p.setPen(Theme::color("#e3ebee"));p.drawLine(QPointF(x,top_),QPointF(x,h));
         p.setPen(Theme::color("#83949f"));p.drawText(QRectF(x+6,9,100,22),QString::number(t,'f',step<1?1:0)+" s");
@@ -109,13 +199,13 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     auto drawNote=[&](const MappedNote& n) {
         auto rect=noteRect(n);
         if(rect.right()<gutter_||rect.left()>w) return;
-        QColor color=n.mapping==Mapping::Edited?Theme::color("#6582bd"):n.mapping==Mapping::Exact?Theme::color("#189e91"):n.mapping==Mapping::Approximate?Theme::color("#d5a14a"):Theme::color("#b7c1cb");
-        if(n.conflict) color=Theme::color("#d4656d");
+        QColor color=practiceMode_?Theme::color("#189e91"):n.mapping==Mapping::Edited?Theme::color("#6582bd"):n.mapping==Mapping::Exact?Theme::color("#189e91"):n.mapping==Mapping::Approximate?Theme::color("#d5a14a"):Theme::color("#b7c1cb");
+        if(n.conflict&&!practiceMode_)color=Theme::color("#d4656d");
         p.setBrush(color);p.setPen(selection_.contains(n.source)?QPen(Theme::color("#142e3e"),2):Qt::NoPen);
         p.drawRoundedRect(rect,4,4);
         if(rect.width()>19) {
             p.setPen(Qt::white);p.setFont(QFont("Segoe UI",9,QFont::DemiBold));
-            QString text=n.target>=0?QString(QChar(keys[n.target])):QString::fromStdString(pitchName(song_->notes[n.source].pitch));
+            QString text=n.target>=0?QString(QChar(practiceMode_?practiceKeys_[n.target]:keys[n.target])):QString::fromStdString(pitchName(song_->notes[n.source].pitch));
             p.drawText(rect.adjusted(selection_.contains(n.source)?10:5,0,-6,0),Qt::AlignVCenter|Qt::AlignLeft,text);
         }
         if(selection_.contains(n.source)&&n.target>=0&&!deleteMode_&&editingEnabled_) {
@@ -134,7 +224,7 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     if(gesture_==Gesture::Box&&dragMoved_) {
         p.setBrush(QColor(53,94,232,30));p.setPen(QPen(Theme::color("#355ee8"),1,Qt::DashLine));p.drawRect(selectionRect());
     }
-    if(result_&&rangeEnd_>=0){
+    if(!practiceMode_&&result_&&rangeEnd_>=0){
         const double a=gutter_+(rangeStart_-left)*pixels_,b=gutter_+(rangeEnd_-left)*pixels_;
         p.fillRect(QRectF(gutter_,top_,std::max(0.0,a-gutter_),h-top_),QColor(120,140,152,55));
         p.fillRect(QRectF(std::max(double(gutter_),b),top_,std::max(0.0,w-std::max(double(gutter_),b)),h-top_),QColor(120,140,152,55));
@@ -144,7 +234,7 @@ void PianoRoll::paintEvent(QPaintEvent*) {
         p.setPen(QPen(Theme::color("#355ee8"),1.5));p.drawLine(QPointF(x,top_),QPointF(x,h));
     }
     p.restore();
-    if(result_&&result_->duration>0&&rangeEnd_>=0){
+    if(!practiceMode_&&result_&&result_->duration>0&&rangeEnd_>=0){
         p.save();p.setClipRect(gutter_,top_-13,w-gutter_,h-top_+13);
         p.setPen(QPen(Theme::color("#20a45b"),1.5));
         for(double t:{rangeStart_,rangeEnd_}){
@@ -154,15 +244,28 @@ void PianoRoll::paintEvent(QPaintEvent*) {
         }
         p.restore();
     }
+    if(practiceMode_&&result_&&result_->duration>0&&rangeEnd_>=0){
+        p.save();p.setClipRect(gutter_,top_-14,w-gutter_,h-top_+14);
+        const QColor boundary=Theme::color("#178e80");
+        for(int endpoint=0;endpoint<2;++endpoint){
+            const double x=gutter_+((endpoint?rangeEnd_:rangeStart_)-left)*pixels_;
+            p.setPen(QPen(boundary,1.5,Qt::DashLine));p.drawLine(QPointF(x,top_),QPointF(x,h));
+            const QRectF label(x+(endpoint?-21:1),top_-14,20,14);
+            p.setPen(Qt::NoPen);p.setBrush(Theme::color("#e5f3ef"));p.drawRoundedRect(label,3,3);
+            p.setPen(boundary);p.setFont(QFont("Segoe UI",9,QFont::DemiBold));
+            p.drawText(label,Qt::AlignCenter,endpoint?"B":"A");
+        }
+        p.restore();
+    }
     p.fillRect(0,0,gutter_,h,Theme::color("#f6f9fa"));
     p.setPen(Theme::color("#83949f"));p.setFont(QFont("Microsoft YaHei UI",9));
     p.drawText(QRect(16,9,70,24),Qt::AlignVCenter,"按键 / 音高");
-    for(int r=0;r<10;++r) {
+    for(int r=0;r<(practiceMode_?9:10);++r) {
         QRect rr(0,top_+r*rh,gutter_,rh);
         if(r<9) {
             int i=8-r;
             p.setPen(Theme::color("#203d4e"));p.setFont(QFont("Segoe UI",12,QFont::Bold));
-            p.drawText(rr.adjusted(20,0,0,0),Qt::AlignVCenter,QString(QChar(keys[i])));
+            p.drawText(rr.adjusted(20,0,0,0),Qt::AlignVCenter,QString(QChar(practiceMode_?practiceKeys_[i]:keys[i])));
             p.setPen(Theme::color("#8495a0"));p.setFont(QFont("Segoe UI",9));
             p.drawText(rr.adjusted(50,0,0,0),Qt::AlignVCenter,QString::fromStdString(pitchName(pitches[i])));
         } else {p.setPen(Theme::color("#93a0aa"));p.setFont(QFont("Microsoft YaHei UI",9));p.drawText(rr,Qt::AlignCenter,"已跳过");}
@@ -199,6 +302,10 @@ int PianoRoll::hit(const QPointF& point) const {
 void PianoRoll::mousePressEvent(QMouseEvent* e) {
     if(e->button()!=Qt::LeftButton) return;
     setFocus(Qt::MouseFocusReason);cancelGesture();
+    if(practiceMode_){
+        if(e->position().x()>=gutter_&&result_)emit seekRequested(std::clamp((e->position().x()-gutter_+horizontalScrollBar()->value())/pixels_,0.0,result_->duration));
+        e->accept();return;
+    }
     const auto boundary=(e->modifiers()&(Qt::ControlModifier|Qt::ShiftModifier))?Gesture::None:rangePartAt(e->position());
     if(boundary!=Gesture::None){
         emit editStarted();gesture_=boundary;savedRangeStart_=rangeStart_;savedRangeEnd_=rangeEnd_;
@@ -247,6 +354,15 @@ void PianoRoll::mousePressEvent(QMouseEvent* e) {
     }
 }
 void PianoRoll::mouseMoveEvent(QMouseEvent* e) {
+    if(practiceMode_){
+        viewport()->setCursor(Qt::ArrowCursor);
+        const int id=hit(e->position());
+        if(id<0){QToolTip::hideText();return;}
+        const auto& note=result_->notes[id];
+        QToolTip::showText(e->globalPosition().toPoint(),QString("按键 %1\n开始 %2 s · 持续 %3 s")
+            .arg(QChar(keys[note.target])).arg(note.start,0,'f',3).arg(note.duration,0,'f',3),viewport());
+        return;
+    }
     if(isEditing()) {lastPointer_=e->position();updateGesture(lastPointer_);return;}
     if(rangePartAt(e->position())!=Gesture::None){
         viewport()->setCursor(Qt::SizeHorCursor);
@@ -275,7 +391,7 @@ void PianoRoll::wheelEvent(QWheelEvent* e) {
     else {horizontalScrollBar()->setValue(horizontalScrollBar()->value()-e->angleDelta().y());e->accept();}
 }
 bool PianoRoll::editable(int source) const {
-    return editingEnabled_&&result_&&source>=0&&source<static_cast<int>(result_->notes.size())&&visibleNote(result_->notes[source])&&result_->notes[source].target>=0;
+    return !practiceMode_&&editingEnabled_&&result_&&source>=0&&source<static_cast<int>(result_->notes.size())&&visibleNote(result_->notes[source])&&result_->notes[source].target>=0;
 }
 std::pair<QRectF,QRectF> PianoRoll::handles(const MappedNote& note) const {
     auto rect=noteRect(note);double y=rect.center().y()-4;
@@ -298,7 +414,7 @@ PianoRoll::Gesture PianoRoll::partAt(int source,const QPointF& point) const {
 }
 bool PianoRoll::isEditing() const {return gesture_!=Gesture::None;}
 PianoRoll::Gesture PianoRoll::rangePartAt(const QPointF& point) const {
-    if(!editingEnabled_||!result_||result_->duration<=0||rangeEnd_<0||point.y()<top_-13||point.x()<gutter_)return Gesture::None;
+    if(practiceMode_||!editingEnabled_||!result_||result_->duration<=0||rangeEnd_<0||point.y()<top_-13||point.x()<gutter_)return Gesture::None;
     const double a=gutter_+rangeStart_*pixels_-horizontalScrollBar()->value(),b=gutter_+rangeEnd_*pixels_-horizontalScrollBar()->value();
     const double radius=point.y()<top_+6?7:3;
     const double da=std::abs(point.x()-a),db=std::abs(point.x()-b);
@@ -372,6 +488,7 @@ void PianoRoll::mouseReleaseEvent(QMouseEvent* e) {
     updateRange();
 }
 void PianoRoll::keyPressEvent(QKeyEvent* e) {
+    if(practiceMode_){QAbstractScrollArea::keyPressEvent(e);return;}
     const bool left=matchesShortcut(ShortcutAction::RangeLeftToPlayhead,e),right=matchesShortcut(ShortcutAction::RangeRightToPlayhead,e);
     if(left||right){
         if(!e->isAutoRepeat()&&result_&&result_->duration>0&&rangeEnd_>=0&&!isEditing())emit rangeBoundaryToPlayheadRequested(left,playhead_);
@@ -401,22 +518,23 @@ void PianoRoll::transposeSelection(int delta) {
     for(auto& n:notes)n.target+=delta;
     emit editStarted();emit notesEdited(notes);
 }
-void PianoRoll::setDeleteMode(bool enabled) {cancelGesture();deleteMode_=enabled;if(enabled)setAddMode(false);viewport()->update();}
+void PianoRoll::setDeleteMode(bool enabled) {cancelGesture();deleteMode_=enabled&&!practiceMode_;if(deleteMode_)setAddMode(false);viewport()->update();}
 void PianoRoll::setAddMode(bool enabled) {
-    enabled=enabled&&editingEnabled_;
+    enabled=enabled&&editingEnabled_&&!practiceMode_;
     if(addMode_==enabled)return;
     cancelGesture();addMode_=enabled;
     if(enabled){deleteMode_=false;viewport()->setCursor(Qt::CrossCursor);}
     emit addModeChanged(enabled);viewport()->update();
 }
 void PianoRoll::setEditingEnabled(bool enabled) {
+    enabled=enabled&&!practiceMode_;
     if(editingEnabled_==enabled)return;
     cancelGesture();editingEnabled_=enabled;
     if(!enabled){deleteMode_=false;setAddMode(false);}
     viewport()->update();
 }
 void PianoRoll::contextMenuEvent(QContextMenuEvent* e) {
-    if(!editingEnabled_){e->accept();return;}
+    if(practiceMode_||!editingEnabled_){e->accept();return;}
     int id=hit(viewport()->mapFromGlobal(e->globalPos()));if(id<0)return;
     cancelGesture();if(!selection_.contains(id))selection_={id};selected_=id;notifySelection();emit editStarted();
     QMenu menu(this);auto* remove=menu.addAction(QString("删除选中 %1 个音符\t%2").arg(selection_.size()).arg(Preferences::instance().shortcutText(ShortcutAction::DeleteNotes)));

@@ -17,6 +17,7 @@ struct Note {
 };
 struct Track { std::string name; int source{}, channel{}, count{}; };
 struct Tempo { int tick{}, micros{500000}; double seconds{}; };
+struct TimeSignature { int tick{}, numerator{4}, denominator{4}; };
 struct Song {
     int ppq{}, format{}, endTick{};
     std::vector<Track> tracks;
@@ -24,6 +25,7 @@ struct Song {
     std::vector<Tempo> tempos;
     std::vector<std::string> warnings;
     double secondsAt(int tick) const;
+    std::vector<TimeSignature> timeSignatures{{0,4,4}};
 };
 struct Settings {
     bool nearest{true}, fixedTempo{false}, autoTranspose{true};

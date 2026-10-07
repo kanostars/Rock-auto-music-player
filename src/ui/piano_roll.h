@@ -2,16 +2,18 @@
 #include "core/music.h"
 #include <QAbstractScrollArea>
 #include <QTimer>
-#include <functional>
 #include <memory>
 #include <set>
 
+class QPainter;
 namespace rock {
 class PianoRoll : public QAbstractScrollArea {
     Q_OBJECT
 public:
     explicit PianoRoll(QWidget* parent=nullptr);
     void setMusic(std::shared_ptr<const Song> song, std::shared_ptr<const Conversion> result);
+    void setPracticeMode(bool enabled,const Settings& settings={});
+    void setPracticeKeys(const std::array<int,9>& keyLabels);
     void setTrackFilter(int track);
     void setZoom(double pixelsPerSecond);
     void fitAll();
@@ -25,7 +27,6 @@ public:
     bool addMode() const {return addMode_;}
     void setEditingEnabled(bool enabled);
     bool isEditing() const;
-    bool editingEnabled() const {return editingEnabled_;}
     int selectedSource() const {return selected_;}
     double zoom() const {return pixels_;}
 signals:
@@ -63,6 +64,11 @@ private:
     QPointF pressPosition_, lastPointer_;
     double pressOffset_{};
     bool dragMoved_{}, deleteMode_{}, addMode_{}, editingEnabled_{true};
+    bool practiceMode_{},editingBeforePractice_{true};
+    Settings practiceSettings_;
+    std::array<int,9> practiceKeys_{};
+    struct BarSegment {double first{},last{},length{};quint64 number{1};};
+    std::vector<BarSegment> bars_;
     QTimer dragScroll_;
     static constexpr int gutter_=92, top_=44;
     int rowHeight() const;
@@ -80,5 +86,7 @@ private:
     QRectF selectionRect() const;
     void transposeSelection(int delta);
     void updateRange();
+    void rebuildBars();
+    void drawPracticeRuler(QPainter& painter,double left,int width,int height);
 };
 }

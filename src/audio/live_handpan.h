@@ -8,7 +8,7 @@ class LiveHandpanMixer {
 public:
     explicit LiveHandpanMixer(SampleBank bank);
     bool strike(int target);
-    void render(float* stereo,size_t frames);
+    void render(float* stereo,size_t frames,float volume=.6f);
     void clear(); // Only after the playback device has stopped.
 private:
     SampleBank bank_;
@@ -24,6 +24,7 @@ public:
     ~LiveHandpanPlayer();
     bool start(QString& error);
     bool strike(int target);
+    void setVolume(float volume);
     void stop();
     bool running() const;
 private:

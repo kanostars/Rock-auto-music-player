@@ -17,6 +17,8 @@ class PianoRoll;
 class PerformancePanel;
 class MiniPlayer;
 class SettingsPage;
+class PracticePage;
+class TimeSeekEdit;
 class GlobalShortcut;
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -69,9 +71,13 @@ private:
     bool miniSeekResume_{},miniSeekPerformance_{};std::shared_ptr<Song> miniSeekSong_;
     QTabWidget* tabs_{};
     SettingsPage* appSettings_{};QPushButton* settingsNavigation_{};
+    QPushButton *headerLogo_{},*practiceBack_{};
+    QLabel *headerPageTitle_{},*headerSubtitle_{};
+    PracticePage* practicePage_{};QPushButton* practiceButton_{};
     std::array<QShortcut*,3> editorShortcuts_{};QShortcut* fullscreenShortcut_{};
     std::array<GlobalShortcut*,3> globalShortcuts_{};bool closing_{};
-    QLabel *songTitle_{},*subtitle_{},*status_{},*details_{},*clock_{},*dirty_{},*summary_{},*zoomText_{};
+    QLabel *songTitle_{},*subtitle_{},*status_{},*details_{},*dirty_{},*summary_{},*zoomText_{};
+    TimeSeekEdit* clock_{};
     QComboBox *strategy_{},*tempoMode_{},*filter_{},*octaveMode_{};
     QLabel* octaveInfo_{};
     QDoubleSpinBox *bpm_{},*speed_{};
@@ -84,6 +90,9 @@ private:
     QTimer timer_; double position_{};
     void buildUi();
     void showAppSettings(bool show);
+    void setPageHeader(const QString& title={},const QString& subtitle={});
+    void openPractice();
+    void leavePractice();
     void updateShortcuts();
     void updateGlobalShortcuts();
     void toggleMiniPlayer();
@@ -115,6 +124,7 @@ private:
     void togglePlayback();
     void startPreview();
     void pausePreview(bool reset=false);
+    void seekPreviewTime(double seconds);
     void refreshClock();
     void editNotes(const std::vector<MappedNote>& notes);
     void addNote(double start,int target);

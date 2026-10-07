@@ -2,7 +2,9 @@
 #include <QFile>
 #include <QResource>
 #include <miniaudio.h>
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <stdexcept>
 
 static void initSoundbank() {Q_INIT_RESOURCE(soundbank);}
@@ -26,6 +28,7 @@ struct AudioPlayer::Impl {
     bool initialized{};
     std::unique_ptr<HandpanMixer> mixer;
     std::atomic<uint64_t> cursor{},end{};
+    std::atomic<double> speed{1};
     std::atomic<float> volume{.6f};
     static void callback(ma_device* device,void* output,const void*,ma_uint32 frames) {
         auto& self=*static_cast<Impl*>(device->pUserData);
@@ -36,17 +39,29 @@ struct AudioPlayer::Impl {
 };
 AudioPlayer::AudioPlayer():impl_(std::make_unique<Impl>()){}
 AudioPlayer::~AudioPlayer()=default;
-bool AudioPlayer::play(const Song& song,const Conversion& result,double seconds,QString& error,double end) {
+bool AudioPlayer::play(const Song& song,const Conversion& result,double seconds,QString& error,double end,double speed,bool allowConflicts) {
     pause();auto& p=*impl_;
-    if(result.conflicts>0) {
+    if(!std::isfinite(speed)||speed<.25||speed>4) {
+        error=QStringLiteral("播放速度需在 0.25～4 倍之间。");return false;
+    }
+    if(!std::isfinite(seconds)||seconds<0||seconds>1e12||!std::isfinite(end)||(end<0&&end!=-1)||end>1e12) {
+        error=QStringLiteral("音频时间超出支持范围。");return false;
+    }
+    if(result.conflicts>0&&!allowConflicts) {
         error=QString("存在 %1 处同键冲突，无法播放音频。请消除冲突并重新转换。").arg(result.conflicts);
         return false;
     }
     try {
         if(!p.mixer)p.mixer=std::make_unique<HandpanMixer>(loadHandpanBank());
-        p.mixer->prepare(song,result);if(end>=0)p.mixer->limitEnd(end);p.mixer->seek(seconds);
+        if(speed==1)p.mixer->prepare(song,result);
+        else {
+            auto timed=result;timed.duration/=speed;
+            for(auto& note:timed.notes){note.start/=speed;note.duration/=speed;}
+            p.mixer->prepare(song,timed);
+        }
+        if(end>=0)p.mixer->limitEnd(end/speed);p.mixer->seek(seconds/speed);
     } catch(const std::exception& e){error=QString::fromUtf8(e.what());return false;}
-    p.cursor.store(p.mixer->cursor());p.end.store(p.mixer->endFrame());
+    p.speed.store(speed,std::memory_order_relaxed);p.cursor.store(p.mixer->cursor());p.end.store(p.mixer->endFrame());
     if(!p.initialized) {
         auto config=ma_device_config_init(ma_device_type_playback);
         config.playback.format=ma_format_f32;config.playback.channels=2;config.sampleRate=audioRate;
@@ -65,8 +80,8 @@ bool AudioPlayer::play(const Song& song,const Conversion& result,double seconds,
     error.clear();return true;
 }
 void AudioPlayer::pause(){if(impl_->initialized)ma_device_stop(&impl_->device);}
-void AudioPlayer::setVolume(float volume){impl_->volume.store(volume,std::memory_order_relaxed);}
-double AudioPlayer::position() const{return double(impl_->cursor.load(std::memory_order_relaxed))/audioRate;}
+void AudioPlayer::setVolume(float volume){impl_->volume.store(std::isfinite(volume)?std::clamp(volume,0.f,1.f):0.f,std::memory_order_relaxed);}
+double AudioPlayer::position() const{return double(impl_->cursor.load(std::memory_order_relaxed))/audioRate*impl_->speed.load(std::memory_order_relaxed);}
 bool AudioPlayer::finished() const{return impl_->cursor.load(std::memory_order_relaxed)>=impl_->end.load(std::memory_order_relaxed);}
 bool AudioPlayer::running() const{return impl_->initialized&&ma_device_is_started(&impl_->device);}
 }

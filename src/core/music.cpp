@@ -65,6 +65,11 @@ void validate(const std::string& bytes, const std::atomic_bool* cancel) {
                 if ((type==0x51 && n!=3)||(type==0x2f && n!=0)||(type==0x58 && n!=4))
                     throw std::runtime_error("MIDI 元事件长度无效。");
                 if(type==0x51) { if (!e.be(3)) throw std::runtime_error("MIDI 速度值不能为零。"); }
+                else if(type==0x58) {
+                    const auto numerator=e.byte(),power=e.byte();
+                    if(!numerator||power>30)throw std::runtime_error("MIDI 拍号超出支持范围。");
+                    e.skip(2);
+                }
                 else e.skip(n);
                 if(type==0x2f) { ended=true; if(e.pos!=e.end) throw std::runtime_error("轨道结束标记后仍有数据。"); }
             } else if(status==0xf0 || status==0xf7) { running=0; e.skip(e.vlq()); }
@@ -97,6 +102,8 @@ Song parseMidi(const std::string& bytes, const std::atomic_bool* cancel) {
     Song song; song.format=static_cast<unsigned char>(bytes[9]); song.ppq=midi.getTPQ();
     struct RawTempo {int tick, track, order, micros;};
     std::vector<RawTempo> tempos;
+    struct RawSignature {int tick,track,order,numerator,denominator;};
+    std::vector<RawSignature> signatures;
     int orphan=0, truncated=0, invalid=0, overlap=0;
     bool expression=false;
     for(int t=0;t<midi.getTrackCount();++t) {
@@ -109,6 +116,10 @@ Song parseMidi(const std::string& bytes, const std::atomic_bool* cancel) {
             const auto& e=midi[t][i]; endTick=std::max(endTick,e.tick);
             if(e.size()>2 && e[0]==0xff && e[1]==3) name=metaText(e);
             if(e.isTempo()) tempos.push_back({e.tick,t,i,(int(e[3])<<16)|(int(e[4])<<8)|e[5]});
+            if(e.size()>2&&e[0]==0xff&&e[1]==0x58){
+                const auto data=metaText(e);
+                signatures.push_back({e.tick,t,i,static_cast<unsigned char>(data[0]),1<<static_cast<unsigned char>(data[1])});
+            }
         }
         auto trackFor=[&](int channel) {
             if(auto it=channelTracks.find(channel);it!=channelTracks.end()) return it->second;
@@ -163,6 +174,26 @@ Song parseMidi(const std::string& bytes, const std::atomic_bool* cancel) {
         i=end;
     }
     if(tempoConflicts) song.warnings.push_back("同 tick 的不同速度已按最低轨号、同轨最后事件处理。");
+    std::sort(signatures.begin(),signatures.end(),[](const auto& a,const auto& b){
+        return std::tie(a.tick,a.track,a.order)<std::tie(b.tick,b.track,b.order);
+    });
+    int signatureConflicts=0;
+    for(size_t i=0;i<signatures.size();) {
+        size_t end=i+1,chosen=i;
+        while(end<signatures.size()&&signatures[end].tick==signatures[i].tick){
+            if(signatures[end].track==signatures[i].track)chosen=end;
+            ++end;
+        }
+        for(size_t k=i;k<end;++k)
+            if(signatures[k].numerator!=signatures[chosen].numerator||signatures[k].denominator!=signatures[chosen].denominator){++signatureConflicts;break;}
+        const auto& signature=signatures[chosen];
+        auto& previous=song.timeSignatures.back();
+        if(previous.tick==signature.tick)previous={signature.tick,signature.numerator,signature.denominator};
+        else if(previous.numerator!=signature.numerator||previous.denominator!=signature.denominator)
+            song.timeSignatures.push_back({signature.tick,signature.numerator,signature.denominator});
+        i=end;
+    }
+    if(signatureConflicts)song.warnings.push_back("同 tick 的不同拍号已按最低轨号、同轨最后事件处理。");
     // Display channels consistently, independent of the order notes end.
     std::vector<int> order(song.tracks.size()), remap(song.tracks.size());
     std::iota(order.begin(),order.end(),0);

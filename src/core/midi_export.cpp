@@ -39,6 +39,14 @@ std::string exportMidi(const Song& song,const Conversion& result,const Settings&
         if(song.tempos.empty()||song.tempos.front().tick>0)addTempo(0,500000);
         for(const auto& tempo:song.tempos)if(tempo.tick<=endTick)addTempo(tempo.tick,tempo.micros);
     }
+    for(const auto& signature:song.timeSignatures){
+        if(signature.tick<0||signature.numerator<1||signature.numerator>255||signature.denominator<1||
+           (signature.denominator&(signature.denominator-1)))throw std::invalid_argument("无法导出：曲目拍号无效。");
+        if(signature.tick>endTick)continue;
+        unsigned power=0;for(auto value=signature.denominator;value>1;value/=2)++power;
+        std::vector<unsigned char> data{static_cast<unsigned char>(signature.numerator),static_cast<unsigned char>(power),24,8};
+        midi.addMetaEvent(0,signature.tick,0x58,data);
+    }
     // Separate overlapping strikes of the same pitch onto melodic channels. This
     // preserves their individual releases (including nested notes) on re-import.
     std::array<std::array<int,16>,9> releaseTicks{};

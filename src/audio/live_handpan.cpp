@@ -15,7 +15,7 @@ bool LiveHandpanMixer::strike(int target) {
     if(next==read_.load(std::memory_order_acquire))return false;
     queue_[write]=target;write_.store(next,std::memory_order_release);return true;
 }
-void LiveHandpanMixer::render(float* stereo,size_t frames) {
+void LiveHandpanMixer::render(float* stereo,size_t frames,float volume) {
     auto read=read_.load(std::memory_order_relaxed);const auto end=write_.load(std::memory_order_acquire);
     while(read!=end) {
         const int target=queue_[read];auto voice=std::find_if(voices_.begin(),voices_.end(),[](const auto& v){return !v.sample;});
@@ -24,10 +24,11 @@ void LiveHandpanMixer::render(float* stereo,size_t frames) {
         read=(read+1)%queue_.size();
     }
     read_.store(read,std::memory_order_release);std::fill_n(stereo,frames*2,0.f);
+    const float gain=(100.f/127.f)*(std::isfinite(volume)?std::clamp(volume,0.f,1.f):0.f);
     for(auto& voice:voices_)if(voice.sample) {
         const size_t count=std::min(frames,voice.sample->size()/2-voice.frame);
         for(size_t i=0;i<count;++i)for(size_t channel=0;channel<2;++channel)
-            stereo[i*2+channel]+=(*voice.sample)[(voice.frame+i)*2+channel]*(100.f/127.f)*.6f;
+            stereo[i*2+channel]+=(*voice.sample)[(voice.frame+i)*2+channel]*gain;
         voice.frame+=count;if(voice.frame>=voice.sample->size()/2)voice={};
     }
     for(size_t i=0;i<frames*2;++i)stereo[i]=std::tanh(stereo[i]);
@@ -36,8 +37,10 @@ void LiveHandpanMixer::clear(){voices_.fill({});read_.store(0);write_.store(0);}
 struct LiveHandpanPlayer::Impl {
     ma_device device{};bool initialized{};
     std::unique_ptr<LiveHandpanMixer> mixer;
+    std::atomic<float> volume{.6f};
     static void callback(ma_device* device,void* output,const void*,ma_uint32 frames) {
-        static_cast<Impl*>(device->pUserData)->mixer->render(static_cast<float*>(output),frames);
+        auto& self=*static_cast<Impl*>(device->pUserData);
+        self.mixer->render(static_cast<float*>(output),frames,self.volume.load(std::memory_order_relaxed));
     }
     ~Impl(){if(initialized)ma_device_uninit(&device);}
 };
@@ -61,6 +64,7 @@ bool LiveHandpanPlayer::start(QString& error) {
     return true;
 }
 bool LiveHandpanPlayer::strike(int target){return running()&&impl_->mixer->strike(target);}
+void LiveHandpanPlayer::setVolume(float volume){impl_->volume.store(std::isfinite(volume)?std::clamp(volume,0.f,1.f):0.f,std::memory_order_relaxed);}
 void LiveHandpanPlayer::stop(){if(impl_->initialized)ma_device_stop(&impl_->device);if(impl_->mixer)impl_->mixer->clear();}
 bool LiveHandpanPlayer::running() const{return impl_->initialized&&ma_device_is_started(&impl_->device);}
 }
