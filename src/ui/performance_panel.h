@@ -46,6 +46,9 @@ namespace rock {
         }
 
         void cyclePlayMode();
+        int countdown() const;
+        bool activatesTarget() const;
+        void setStartOptions(int countdown,bool activateTarget);
 
         void navigateSong(bool previous);
 

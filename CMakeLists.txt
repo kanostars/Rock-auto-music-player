@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(RockAutoMusicPlay VERSION 1.2.0 LANGUAGES C CXX)
+project(RockAutoMusicPlay VERSION 1.2.1 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -34,6 +34,8 @@ set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
     src/app/preferences.cpp src/app/preferences.h
+    src/app/project.cpp src/app/project.h
+    src/ui/project_export_dialog.cpp src/ui/project_export_dialog.h
     src/ui/theme.cpp src/ui/settings_page.cpp src/ui/settings_page.h
     src/ui/practice_page.cpp src/ui/practice_page.h
     src/ui/practice_settings_dialog.cpp src/ui/practice_settings_dialog.h

@@ -1,5 +1,5 @@
 #pragma once
-#include "core/music.h"
+#include "app/project.h"
 #include "audio/audio_player.h"
 #include <QFutureWatcher>
 #include <QMainWindow>
@@ -34,25 +34,9 @@ protected:
     void dropEvent(QDropEvent*) override;
 private:
     enum class TextScoreFormat { Hand, Keys };
-    struct EditChange {int source{};std::optional<NoteEdit> before, after;};
-    struct TimelineState {Song song;NoteEdits edits;int first{},last{-1};};
-    struct HistoryEntry {
-        HistoryEntry()=default;
-        std::vector<EditChange> changes;
-        std::optional<TimelineState> before,after;
-        HistoryEntry(std::vector<EditChange> c):changes(std::move(c)){}
-        HistoryEntry(TimelineState b,TimelineState a):before(std::move(b)),after(std::move(a)){}
-    };
-    struct Session {
-        QString path;
-        std::shared_ptr<Song> song;
-        Settings settings;
-        std::shared_ptr<Conversion> result;
-        NoteEdits edits;
-        std::vector<HistoryEntry> history;
-        size_t historyCursor{};
-        int rangeFirst{},rangeLast{-1}; // -1 follows the whole song, including new notes.
-    };
+    using EditChange=ProjectEditChange;
+    using TimelineState=ProjectTimelineState;
+    using Session=ProjectSession;
     struct Loaded {Session session; QString error;};
     std::vector<Session> sessions_;
     QFutureWatcher<std::vector<Loaded>> importWatcher_;
@@ -72,6 +56,12 @@ private:
     QTabWidget* tabs_{};
     SettingsPage* appSettings_{};QPushButton* settingsNavigation_{};
     QPushButton *headerLogo_{},*practiceBack_{};
+    QPushButton* projectMenu_{};
+    QString projectPath_;
+    ProjectStorage projectStorage_{ProjectStorage::Embedded};
+    QByteArray savedProjectFingerprint_;
+    bool projectNeedsSave_{},closePromptOpen_{},closeAfterImport_{};
+    QLabel* libraryCount_{};
     QLabel *headerPageTitle_{},*headerSubtitle_{};
     PracticePage* practicePage_{};QPushButton* practiceButton_{};
     std::array<QShortcut*,3> editorShortcuts_{};QShortcut* fullscreenShortcut_{};
@@ -117,6 +107,14 @@ private:
     void showNote(int source);
     void showDiagnostics();
     void exportCurrentMidi();
+    ProjectState captureProject() const;
+    void restoreProject(ProjectState state);
+    void exportWorkbenchProject();
+    bool saveWorkbenchProject(bool saveAs);
+    bool writeWorkbenchProject(const QString& path,ProjectState state,ProjectStorage storage);
+    bool hasUnsavedProjectChanges() const;
+    void importWorkbenchProject();
+    bool importProjectFile(const QString& path);
     bool currentScoreText(TextScoreFormat format,QString& text);
     void copyCurrentScore(TextScoreFormat format);
     void exportCurrentScore(TextScoreFormat format);

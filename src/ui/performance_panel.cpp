@@ -85,6 +85,9 @@ void PerformancePanel::updatePlayMode(){
     playMode_->setToolTip(names[playModeIndex_]+" · 试听与自动演奏共用\n点击切换为"+names[(playModeIndex_+1)%4]);
 }
 void PerformancePanel::cyclePlayMode(){if(libraryBusy_||(running_&&controller_.snapshot().state!=PerformanceState::Paused))return;playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();}
+int PerformancePanel::countdown() const{return countdown_->value();}
+bool PerformancePanel::activatesTarget() const{return activate_->isChecked();}
+void PerformancePanel::setStartOptions(int countdown,bool activateTarget){if(running_)return;countdown_->setValue(countdown);activate_->setChecked(activateTarget);}
 bool PerformancePanel::outputReady() const{return keyboards_->currentIndex()>=0&&windows_->currentIndex()>=0;}
 QString PerformancePanel::statusText() const{return state_->text();}
 void PerformancePanel::setLibrary(QListWidget* library){
