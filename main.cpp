@@ -1,12 +1,14 @@
 #include "ui/main_window.h"
 #include <QApplication>
 #include <QFont>
+#include <QIcon>
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("RockAutoMusicPlay");
     QApplication::setApplicationVersion(ROCK_APP_VERSION);
     QApplication::setOrganizationName("RockAutoMusicPlay");
+    QApplication::setWindowIcon(QIcon(":/icons/app.png"));
     QApplication::setStyle("Fusion");
     QApplication::setFont(QFont("Microsoft YaHei UI", 10));
     rock::MainWindow window;

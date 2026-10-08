@@ -1,12 +1,14 @@
 # RockAutoMusicPlay
 
-当前版本：1.0.0
+当前版本：1.2.0
 
 将本地 MIDI 文件转换成固定九音键谱的 Windows 桌面软件，支持手碟采样试听与通过 Interception 驱动自动按键弹奏。
 
 使用 C++20 + Qt 6 Widgets 实现集转换、编辑、试听、歌曲跟练和自动演奏于一体的工作台，使用 Midifile 解析 SMF 文件。
 
 ## 运行
+
+Windows x64 便携版在 [GitHub Releases](https://github.com/kanostars/Rock-auto-music-player/releases) 下载。完整解压发布 ZIP，双击 `RockAutoMusicPlay.exe`；请保留同目录 DLL 和插件文件夹。手碟音色与清新风格应用图标已内嵌。自动演奏仍需要已安装并正常工作的 Interception 驱动。
 
 直接启动 `build/RockAutoMusicPlay.exe`，需要保留同目录 DLL 和 `platforms` 等插件目录。可将 MIDI 文件拖入窗口，或点击右上角“导入 MIDI”。使用 `samples/studio-demo.mid` 可体验多轨、变速和近似音转换。
 
@@ -182,6 +184,8 @@ cmake --build build
 Windows 每次链接后由 CMake 自动部署 Qt DLL、MinGW 运行库及 Windows 平台插件，覆盖 `build`、CLion 的 `cmake-build-debug` 以及其他构建目录；不需要修改系统 PATH。Qt SDK 不提交进源码。依赖来源见 [third_party/SOURCES.md](third_party/SOURCES.md)。
 
 CLion 选择 `RockAutoMusicPlay` 目标，重新加载 CMake 后编译运行即可。不要单独移动 EXE；必须保留输出目录中的 DLL 和 `platforms` 文件夹。若旧构建出现 `0xC0000135`，重新构建该目标，让构建步骤补齐运行库。
+
+发布包可通过 `./scripts/package-release.ps1` 构建并生成，输出到 `artifacts/releases/`，包含 Release EXE、运行依赖、示例曲目、使用说明及第三方许可。已有构建时可传入 `-SkipBuild`。窗口图标与 Windows EXE 图标统一使用 `assets/icons/app.png` / `app.ico`；修改 PNG 后运行 `./scripts/export-icon.ps1` 更新多尺寸 ICO，再重新构建。
 
 ## 项目目录
 
