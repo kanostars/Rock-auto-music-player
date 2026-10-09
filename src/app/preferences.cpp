@@ -23,7 +23,11 @@ namespace rock {
                 {ShortcutAction::PerformanceNext, "performanceNext", "下一首", "Ctrl+E", true},
                 {ShortcutAction::MiniMode, "miniMode", "主窗口 / 小窗切换", "F12", true},
                 {ShortcutAction::RangeLeftToPlayhead, "rangeLeftToPlayhead", "左边界移至播放标", "Alt+[", false},
-                {ShortcutAction::RangeRightToPlayhead, "rangeRightToPlayhead", "右边界移至播放标", "Alt+]", false}
+                {ShortcutAction::RangeRightToPlayhead, "rangeRightToPlayhead", "右边界移至播放标", "Alt+]", false},
+                {ShortcutAction::ExportMidi, "exportMidi", "导出当前 MIDI", "Ctrl+S", false},
+                {ShortcutAction::ExportProject, "exportProject", "导出工作台工程", "Ctrl+Shift+S", false},
+                {ShortcutAction::ImportMidi, "importMidi", "导入 MIDI 文件", "Ctrl+O", false},
+                {ShortcutAction::ImportProject, "importProject", "导入工作台工程", "Ctrl+Shift+O", false}
             }
         };
         return definitions;
@@ -83,7 +87,9 @@ namespace rock {
         // Preserve custom bindings that already use a newly introduced default.
         for (const auto action: {
                  ShortcutAction::PerformancePrevious, ShortcutAction::PerformanceNext, ShortcutAction::MiniMode,
-                 ShortcutAction::RangeLeftToPlayhead, ShortcutAction::RangeRightToPlayhead
+                 ShortcutAction::RangeLeftToPlayhead, ShortcutAction::RangeRightToPlayhead,
+                 ShortcutAction::ExportMidi, ShortcutAction::ExportProject,
+                 ShortcutAction::ImportMidi, ShortcutAction::ImportProject
              }) {
             const auto index = static_cast<size_t>(action);
             const auto path = "shortcuts/" + QString::fromUtf8(shortcutDefinitions()[index].id);

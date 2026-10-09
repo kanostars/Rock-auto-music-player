@@ -25,7 +25,7 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent=nullptr);
     ~MainWindow() override;
-    void importFiles(const QStringList& paths);
+    void openFiles(const QStringList& paths);
     const Conversion* currentResult() const;
 protected:
     bool eventFilter(QObject*,QEvent*) override;
@@ -107,6 +107,8 @@ private:
     void showNote(int source);
     void showDiagnostics();
     void exportCurrentMidi();
+    void importMidiFiles();
+    void importFiles(const QStringList& paths);
     ProjectState captureProject() const;
     void restoreProject(ProjectState state);
     void exportWorkbenchProject();

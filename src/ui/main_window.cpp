@@ -12,6 +12,7 @@
 #include "project_export_dialog.h"
 #include "theme.h"
 #include "app/preferences.h"
+#include "app/export_paths.h"
 #include "platform/global_shortcut.h"
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -151,7 +152,7 @@ void MainWindow::buildUi() {
     practiceBack_=button("返回工作台","practiceBackButton");top->addWidget(practiceBack_);practiceBack_->hide();
     connect(practiceBack_,&QPushButton::clicked,this,&MainWindow::leavePractice);
     connect(settingsNavigation_,&QPushButton::toggled,this,&MainWindow::showAppSettings);
-    connect(import_,&QPushButton::clicked,this,[this]{importFiles(QFileDialog::getOpenFileNames(this,"选择 MIDI 文件",{},"MIDI 文件 (*.mid *.midi)"));});
+    connect(import_,&QPushButton::clicked,this,&MainWindow::importMidiFiles);
 
     workspace_=new QWidget;auto* work=new QHBoxLayout(workspace_);work->setContentsMargins(0,0,0,0);work->setSpacing(0);
     auto* split=new QSplitter;workspaceSplit_=split;split->setChildrenCollapsible(false);work->addWidget(split);outer->addWidget(workspace_,1);
@@ -161,10 +162,11 @@ void MainWindow::buildUi() {
     libraryCount_=label("共 0 首","muted");libraryCount_->setObjectName("librarySongCount");libraryHeading->addWidget(libraryCount_);ll->addLayout(libraryHeading);
     ll->addWidget(label("导入的文件只在本地处理","muted"));
     library_=new QListWidget;library_->setObjectName("songList");library_->setMinimumHeight(120);library_->setMaximumHeight(240);ll->addWidget(library_,1);
-    const auto refreshCount=[this]{libraryCount_->setText(QString("共 %1 首").arg(library_->count()));};
-    connect(library_->model(),&QAbstractItemModel::rowsInserted,this,refreshCount);
-    connect(library_->model(),&QAbstractItemModel::rowsRemoved,this,refreshCount);
-    connect(library_->model(),&QAbstractItemModel::modelReset,this,refreshCount);
+    const auto refreshCount=[count=libraryCount_,library=library_]{count->setText(QString("共 %1 首").arg(library->count()));};
+    // modelReset also fires during destruction; disconnect when the label is deleted.
+    connect(library_->model(),&QAbstractItemModel::rowsInserted,libraryCount_,refreshCount);
+    connect(library_->model(),&QAbstractItemModel::rowsRemoved,libraryCount_,refreshCount);
+    connect(library_->model(),&QAbstractItemModel::modelReset,libraryCount_,refreshCount);
     connect(library_,&QListWidget::currentRowChanged,this,&MainWindow::selectSong);
     auto* line=new QFrame;line->setFrameShape(QFrame::HLine);Theme::setStyle(line,"color:#e7eef1;");ll->addWidget(line);
     ll->addWidget(label("当前曲目音轨","section"));
@@ -403,6 +405,10 @@ void MainWindow::updateShortcuts(){
     play_->setToolTip("试听播放 / 暂停（"+preferences.shortcutText(ShortcutAction::Preview)+"），工作台非输入控件获得焦点时生效");
     roll_->setToolTip(preferences.shortcutText(ShortcutAction::RangeLeftToPlayhead)+" 左边界移至蓝色播放标\n"+preferences.shortcutText(ShortcutAction::RangeRightToPlayhead)+" 右边界移至蓝色播放标\n音轨区获得焦点时生效");
     findChild<QPushButton*>("miniPlayerButton")->setToolTip("点击 Logo 进入小窗模式（"+preferences.shortcutText(ShortcutAction::MiniMode)+" 切换）");
+    import_->setToolTip("导入 MIDI（"+preferences.shortcutText(ShortcutAction::ImportMidi)+"）");
+    exportMidi_->setToolTip("导出当前曲目的完整九键谱（"+preferences.shortcutText(ShortcutAction::ExportMidi)+"），包含音符编辑与已应用的节奏设置");
+    findChild<QAction*>("exportProjectAction")->setText("导出工程…\t"+preferences.shortcutText(ShortcutAction::ExportProject));
+    findChild<QAction*>("importProjectAction")->setText("导入工程…\t"+preferences.shortcutText(ShortcutAction::ImportProject));
     addNote_->setToolTip("开启后点击九键行空白位置添加一拍音符（力度 100）；可连续添加，"+preferences.shortcutText(ShortcutAction::CancelEdit)+" 退出。\n添加到显示筛选指定的音轨；显示全部时优先使用左侧选中的可播放音轨。");
     if(trackWindow_){if(auto* hint=trackWindow_->findChild<QLabel*>("trackShortcutHint"))hint->setText(preferences.shortcutText(ShortcutAction::Preview)+" 试听 / 暂停 · Esc 返回工作台 · "+preferences.shortcutText(ShortcutAction::Fullscreen)+" 切换全屏");if(auto* full=trackWindow_->findChild<QPushButton*>("trackFullscreenButton"))full->setText("切换全屏 · "+preferences.shortcutText(ShortcutAction::Fullscreen));}
     if(current_>=0)showNote(roll_->selectedSource());
@@ -569,6 +575,29 @@ void MainWindow::restoreTrackPanel() {
 }
 bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
     if(watched==trackWindow_&&event->type()==QEvent::Close)restoreTrackPanel();
+    if(!closing_&&!closePromptOpen_&&!QApplication::activeModalWidget()&&!QApplication::activePopupWidget()&&
+       (event->type()==QEvent::ShortcutOverride||event->type()==QEvent::KeyPress||event->type()==QEvent::KeyRelease)){
+        auto* widget=qobject_cast<QWidget*>(watched);auto* key=static_cast<QKeyEvent*>(event);
+        if(widget&&(widget->window()==this||(trackWindow_&&widget->window()==trackWindow_))){
+            // Shortcut editors must receive the combination instead of opening a file dialog.
+            bool capturing=false;
+            for(auto* input=widget;input;input=input->parentWidget())if(qobject_cast<QKeySequenceEdit*>(input)){capturing=true;break;}
+            if(!capturing)for(const auto action:{ShortcutAction::ExportMidi,ShortcutAction::ExportProject,ShortcutAction::ImportMidi,ShortcutAction::ImportProject}){
+                if(!matchesShortcut(action,key))continue;
+                key->accept();
+                if(event->type()==QEvent::KeyPress&&!key->isAutoRepeat()&&!busy_&&!closeAfterImport_&&!roll_->isEditing()){
+                    switch(action){
+                    case ShortcutAction::ExportMidi:exportCurrentMidi();break;
+                    case ShortcutAction::ExportProject:exportWorkbenchProject();break;
+                    case ShortcutAction::ImportMidi:importMidiFiles();break;
+                    case ShortcutAction::ImportProject:importWorkbenchProject();break;
+                    default:break;
+                    }
+                }
+                return true;
+            }
+        }
+    }
     if(!closing_&&!QApplication::activeModalWidget()&&!QApplication::activePopupWidget()&&
        (event->type()==QEvent::ShortcutOverride||event->type()==QEvent::KeyPress||event->type()==QEvent::KeyRelease)){
         auto* widget=qobject_cast<QWidget*>(watched);auto* key=static_cast<QKeyEvent*>(event);
@@ -649,10 +678,33 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     QMainWindow::closeEvent(event);
 }
 
+void MainWindow::openFiles(const QStringList& paths){
+    if(paths.isEmpty()||busy_||closing_||closeAfterImport_||closePromptOpen_||QApplication::activeModalWidget())return;
+    QStringList midi,projects;
+    for(const auto& path:paths){
+        const QFileInfo file(path);if(!file.isFile())continue;
+        const auto suffix=file.suffix().toLower();
+        if(suffix=="rockproj")projects.append(file.absoluteFilePath());
+        else if(suffix=="mid"||suffix=="midi")midi.append(file.absoluteFilePath());
+    }
+    if(!projects.isEmpty()){
+        if(projects.size()!=1||!midi.isEmpty()){showWarning("请单独打开工程","工程会替换整个工作台，请每次单独打开一个工程文件。MIDI 文件可批量导入。");return;}
+        importProjectFile(projects.front());
+    }else if(!midi.isEmpty())importFiles(midi);
+    else showWarning("无法打开文件","请选择存在的 MIDI（.mid / .midi）或工作台工程（.rockproj）文件。");
+}
+void MainWindow::importMidiFiles(){
+    if(busy_||closing_||closeAfterImport_||closePromptOpen_||roll_->isEditing())return;
+    clock_->cancelEditing();if(practicePage_->isVisible())practicePage_->stop();
+    QFileDialog dialog(roll_->window(),"选择 MIDI 文件",{},"MIDI 文件 (*.mid *.midi)");
+    dialog.setObjectName("importMidiDialog");dialog.setAcceptMode(QFileDialog::AcceptOpen);dialog.setFileMode(QFileDialog::ExistingFiles);
+    if(dialog.exec()==QDialog::Accepted)importFiles(dialog.selectedFiles());
+}
 void MainWindow::importFiles(const QStringList& paths) {
     if(paths.isEmpty()||busy_||closeAfterImport_||closePromptOpen_)return;
     if(practicePage_&&practicePage_->isVisible())leavePractice();
     if(auto* prompt=findChild<QMessageBox*>("importConflictDialog");prompt&&prompt->isVisible())return;
+    settingsNavigation_->setChecked(false);
     clock_->cancelEditing();
     performance_->stopPerformance();performance_->setLibraryBusy(true);
     pausePreview();busy_=true;import_->setEnabled(false);updateEditActions();workspace_->setEnabled(false);editorPanel_->setEnabled(false);progress_->show();cancelButton_->show();
@@ -941,8 +993,8 @@ void MainWindow::showDiagnostics() {
     auto* close=new QDialogButtonBox(QDialogButtonBox::Close);close->button(QDialogButtonBox::Close)->setText("关闭");close->button(QDialogButtonBox::Close)->setAutoDefault(false);connect(close,&QDialogButtonBox::rejected,dialog,&QDialog::reject);layout->addWidget(close);dialog->setModal(true);dialog->show();
 }
 void MainWindow::exportCurrentMidi(){
-    if(current_<0||busy_||performance_->active())return;
-    pausePreview();
+    if(current_<0||busy_||performance_->active()||roll_->isEditing())return;
+    if(practicePage_->isVisible())practicePage_->stop();pausePreview();
     if(!validateParameters())return;
     if(settingsPending_){showWarning("请先应用参数","转换参数已修改，请先应用设置，再导出当前曲目的 MIDI。");return;}
     const auto& session=sessions_[current_];
@@ -950,7 +1002,12 @@ void MainWindow::exportCurrentMidi(){
     try{bytes=exportMidi(*session.song,*session.result,session.settings);}
     catch(const std::exception& e){showWarning("导出失败",QString::fromUtf8(e.what()));return;}
     const QFileInfo source(session.path);
-    QFileDialog dialog(roll_->window(),"导出当前曲目 MIDI",source.absolutePath(),"MIDI 文件 (*.mid *.midi)");
+    QString directory,error;
+    if(!prepareExportDirectory(ExportKind::Midi,directory,error)){
+        QMessageBox::warning(roll_->window(),"默认导出目录不可用",error+"\n\n请在保存窗口选择其他位置。");
+        directory=QFileInfo(directory).absolutePath();
+    }
+    QFileDialog dialog(roll_->window(),"导出当前曲目 MIDI",directory,"MIDI 文件 (*.mid *.midi)");
     dialog.setObjectName("exportMidiDialog");dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setFileMode(QFileDialog::AnyFile);dialog.setDefaultSuffix("mid");
     dialog.selectFile(source.completeBaseName()+"_九键.mid");
@@ -959,6 +1016,7 @@ void MainWindow::exportCurrentMidi(){
     if(!file.open(QIODevice::WriteOnly)||file.write(bytes.data(),static_cast<qint64>(bytes.size()))!=static_cast<qint64>(bytes.size())||!file.commit()){
         showWarning("导出失败","无法保存 MIDI："+file.errorString());return;
     }
+    rememberExportDirectory(ExportKind::Midi,path);
     status_->setText("已导出当前曲目 MIDI："+QFileInfo(path).fileName());status_->setToolTip(path);
 }
 bool MainWindow::currentScoreText(TextScoreFormat format,QString& text){
@@ -1060,11 +1118,13 @@ bool MainWindow::writeWorkbenchProject(const QString& path,ProjectState state,Pr
     }
     if(current_>=0)songTitle_->setText(QFileInfo(sessions_[current_].path).completeBaseName());
     projectPath_=path;projectStorage_=storage;projectNeedsSave_=false;savedProjectFingerprint_=projectFingerprint(captureProject());
+    rememberExportDirectory(ExportKind::Project,path);
     QSettings().setValue("project/lastPath",path);status_->setText(QString("已保存工程：%1 · %2 首曲目").arg(QFileInfo(path).fileName()).arg(state.sessions.size()));status_->setToolTip(path);return true;
 }
 bool MainWindow::saveWorkbenchProject(bool saveAs){
     if(busy_||performance_->active()||roll_->isEditing())return false;
-    clock_->cancelEditing();if(current_>=0&&!validateParameters())return false;pausePreview();
+    clock_->cancelEditing();if(current_>=0&&!validateParameters())return false;
+    if(practicePage_->isVisible())practicePage_->stop();pausePreview();
     if(!saveAs&&!projectPath_.isEmpty())return writeWorkbenchProject(projectPath_,captureProject(),projectStorage_);
     auto state=captureProject();ProjectExportDialog options(state,roll_->window());
     if(options.exec()!=QDialog::Accepted)return false;
@@ -1073,8 +1133,12 @@ bool MainWindow::saveWorkbenchProject(bool saveAs){
         if(paths[static_cast<int>(i)].isEmpty()){showWarning("无法导出工程","请为每首曲目保留来源路径或选择 MIDI 文件。");return false;}
         state.sessions[i].path=paths[static_cast<int>(i)];
     }
-    const QString lastPath=QSettings().value("project/lastPath").toString();
-    QFileDialog dialog(roll_->window(),"导出工作台工程",QFileInfo(lastPath).absolutePath(),"工作台工程 (*.rockproj)");
+    QString directory,error;
+    if(!prepareExportDirectory(ExportKind::Project,directory,error)){
+        QMessageBox::warning(roll_->window(),"默认导出目录不可用",error+"\n\n请在保存窗口选择其他位置。");
+        directory=QFileInfo(directory).absolutePath();
+    }
+    QFileDialog dialog(roll_->window(),"导出工作台工程",directory,"工作台工程 (*.rockproj)");
     dialog.setObjectName("saveProjectDialog");dialog.setAcceptMode(QFileDialog::AcceptSave);dialog.setFileMode(QFileDialog::AnyFile);dialog.setDefaultSuffix("rockproj");
     dialog.selectFile(current_>=0?QFileInfo(sessions_[current_].path).completeBaseName()+".rockproj":"工作台.rockproj");
     if(dialog.exec()!=QDialog::Accepted||dialog.selectedFiles().isEmpty())return false;
@@ -1082,9 +1146,10 @@ bool MainWindow::saveWorkbenchProject(bool saveAs){
 }
 void MainWindow::importWorkbenchProject(){
     if(busy_||performance_->active()||roll_->isEditing())return;
-    clock_->cancelEditing();
-    const auto path=QFileDialog::getOpenFileName(roll_->window(),"导入工作台工程",QSettings().value("project/lastPath").toString(),"工作台工程 (*.rockproj)");
-    if(!path.isEmpty())importProjectFile(path);
+    clock_->cancelEditing();if(practicePage_->isVisible())practicePage_->stop();
+    QFileDialog dialog(roll_->window(),"导入工作台工程",QSettings().value("project/lastPath").toString(),"工作台工程 (*.rockproj)");
+    dialog.setObjectName("importProjectDialog");dialog.setAcceptMode(QFileDialog::AcceptOpen);dialog.setFileMode(QFileDialog::ExistingFile);
+    if(dialog.exec()==QDialog::Accepted&&!dialog.selectedFiles().isEmpty())importProjectFile(dialog.selectedFiles().front());
 }
 bool MainWindow::importProjectFile(const QString& path){
     if(busy_||performance_->active()||roll_->isEditing())return false;
@@ -1330,10 +1395,14 @@ void MainWindow::createRange(){
     status_->setText(QString("已插入 %1 秒空片段，后续音符已后移；绿色区间覆盖新空白，可撤销。").arg(last-first,0,'f',2));
 }
 void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
-    if(!busy_&&e->mimeData()->hasUrls())for(const auto& u:e->mimeData()->urls())if(u.isLocalFile()){e->acceptProposedAction();break;}
+    if(busy_||closing_||closePromptOpen_||QApplication::activeModalWidget()||!e->mimeData()->hasUrls())return;
+    for(const auto& u:e->mimeData()->urls())if(u.isLocalFile()){
+        const QFileInfo file(u.toLocalFile());const auto suffix=file.suffix().toLower();
+        if(file.isFile()&&(suffix=="mid"||suffix=="midi"||suffix=="rockproj")){e->acceptProposedAction();break;}
+    }
 }
 void MainWindow::dropEvent(QDropEvent* e) {
     QStringList paths;for(const auto& u:e->mimeData()->urls())if(u.isLocalFile())paths<<u.toLocalFile();
-    importFiles(paths);e->acceptProposedAction();
+    if(!paths.isEmpty()){openFiles(paths);e->acceptProposedAction();}
 }
 }

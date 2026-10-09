@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QFont>
 #include <QIcon>
+#include <QTimer>
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -13,7 +14,8 @@ int main(int argc, char* argv[]) {
     QApplication::setFont(QFont("Microsoft YaHei UI", 10));
     rock::MainWindow window;
     window.showMaximized();
-    if (QApplication::arguments().size() > 1)
-        window.importFiles({QApplication::arguments().at(1)});
+    const auto paths = QApplication::arguments().mid(1);
+    if (!paths.isEmpty())
+        QTimer::singleShot(0, &window, [&window, paths] { window.openFiles(paths); });
     return QApplication::exec();
 }

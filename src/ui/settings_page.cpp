@@ -61,7 +61,8 @@ SettingsPage::SettingsPage(QWidget* parent):QWidget(parent){
         ShortcutAction::PerformancePause,ShortcutAction::PerformanceStop,ShortcutAction::PerformancePrevious,
         ShortcutAction::PerformanceNext,ShortcutAction::MiniMode
     },"可用 F1～F24，或 Ctrl / Alt 加字母、数字（可加 Shift）。暂停 / 继续、终止仅在演奏会话中生效，且不能为空。");
-    addGroup("editingShortcutGroup","试听与音符编辑","试听适用于工作台非输入控件；编辑需轨道获得焦点。",{
+    addGroup("editingShortcutGroup","文件与音符编辑","文件快捷键适用于工作台、设置、跟练和独立轨道；试听避开输入控件，音符编辑需轨道焦点。",{
+        ShortcutAction::ExportMidi,ShortcutAction::ExportProject,ShortcutAction::ImportMidi,ShortcutAction::ImportProject,
         ShortcutAction::Preview,ShortcutAction::Undo,ShortcutAction::Redo,ShortcutAction::RedoAlternate,
         ShortcutAction::SelectAll,ShortcutAction::DeleteNotes
     });

@@ -5,7 +5,7 @@
 class QKeyEvent;
 
 namespace rock {
-enum class ShortcutAction {Preview,Undo,Redo,RedoAlternate,SelectAll,DeleteNotes,PitchUp,PitchDown,CancelEdit,Fullscreen,PerformancePause,PerformanceStop,PerformancePrevious,PerformanceNext,MiniMode,RangeLeftToPlayhead,RangeRightToPlayhead,Count};
+enum class ShortcutAction {Preview,Undo,Redo,RedoAlternate,SelectAll,DeleteNotes,PitchUp,PitchDown,CancelEdit,Fullscreen,PerformancePause,PerformanceStop,PerformancePrevious,PerformanceNext,MiniMode,RangeLeftToPlayhead,RangeRightToPlayhead,ExportMidi,ExportProject,ImportMidi,ImportProject,Count};
 constexpr size_t shortcutCount=static_cast<size_t>(ShortcutAction::Count);
 using ShortcutBindings=std::array<QKeySequence,shortcutCount>;
 struct ShortcutDefinition {ShortcutAction action;const char* id;const char* name;const char* defaultKey;bool global;};
