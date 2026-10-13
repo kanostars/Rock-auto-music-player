@@ -6,10 +6,10 @@ Windows 九键音乐工作台：将 MIDI 转换为固定九音键谱，支持音
 
 ## 快速开始
 
-1. 从 [GitHub Releases](https://github.com/kanostars/Rock-auto-music-player/releases) 下载 Windows x64 便携版，完整解压后运行 `RockAutoMusicPlay.exe`，保留同目录 DLL 和插件文件夹。
+1. 从 [GitHub Releases](https://github.com/kanostars/Rock-auto-music-player/releases) 下载 Windows x64 安装版，选择安装目录和是否创建桌面快捷方式。也可下载便携 ZIP，完整解压后运行 `RockAutoMusicPlay.exe`。
 2. 点击“导入 MIDI”，或将 MIDI 拖入窗口、拖到 EXE 上；支持批量追加。可先导入 `samples/studio-demo.mid` 体验。
 3. 勾选参与转换的音轨，调整右侧参数后点击“应用设置 · 重新转换”。默认自动移调，并优先保留同音名、折叠八度；其余音符可近似转换或跳过。
-4. 点击“手碟试听”听歌，或点击比例显示左侧的“跟练练习”。试听与跟练无需驱动；向游戏自动按键需要安装并启用 [Interception](https://github.com/oblitum/Interception) 驱动。
+4. 点击“手碟试听”听歌，或点击比例显示左侧的“跟练练习”。试听与跟练无需驱动；向游戏自动按键需要 [Interception](https://github.com/oblitum/Interception) 驱动。安装器检测缺失时提供可选官方下载入口，驱动需单独以管理员身份安装并重启。
 
 ## 工作台
 
@@ -98,9 +98,10 @@ cmake --build build
 ```powershell
 ./scripts/package-release.ps1            # 构建并打包
 ./scripts/package-release.ps1 -SkipBuild # 使用已有构建
+./scripts/package-installer.ps1 -SkipBuild -IsccPath "<Inno Setup 6.5+ 的 ISCC.exe 路径>" # 制作安装版
 ```
 
-发布包输出到 `artifacts/releases/`，包含运行依赖、示例曲目与许可文件。Qt SDK 与构建产物不提交到源码。
+发布包输出到 `artifacts/releases/`，包含运行依赖、示例曲目与许可文件。安装版需要 Inno Setup 6.5+ 及其简体中文语言文件；缺少语言文件时可用 `-LanguageFile` 指定 [官方 ChineseSimplified.isl](https://github.com/jrsoftware/issrc/blob/main/Files/Languages/ChineseSimplified.isl)。Qt SDK 与构建产物不提交到源码。
 
 ## 范围与许可
 
