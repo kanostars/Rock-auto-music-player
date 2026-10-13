@@ -1,4 +1,5 @@
 #include "key_output.h"
+#include "app/app_log.h"
 #include <QCoreApplication>
 #include <QLibrary>
 #ifdef Q_OS_WIN
@@ -19,14 +20,22 @@ public:
     InterceptionContext context{};
     ~Driver(){close();}
     void close(){if(context){destroy(context);context=nullptr;}}
-    bool open(QString& error){
+    bool open(QString& error,bool logFailure=true){
         if(context)return true;
         create=reinterpret_cast<decltype(create)>(library.resolve("interception_create_context"));
         destroy=reinterpret_cast<decltype(destroy)>(library.resolve("interception_destroy_context"));
         hardware=reinterpret_cast<decltype(hardware)>(library.resolve("interception_get_hardware_id"));
         send=reinterpret_cast<decltype(send)>(library.resolve("interception_send"));
-        if(!create||!destroy||!hardware||!send){error="无法加载 interception.dll，请重新构建或补齐运行库。";return false;}
-        context=create();if(!context){error="无法连接 Interception 驱动。请确认驱动已安装并重启电脑，且未被其他程序占用。";return false;}return true;
+        if(!create||!destroy||!hardware||!send){
+            error="无法加载 interception.dll，请重新构建或补齐运行库。";
+            if(logFailure)AppLog::instance().write(LogLevel::Error,"驱动",QString("Interception 运行库加载失败：%1").arg(library.errorString()));
+            return false;
+        }
+        context=create();if(!context){
+            error="无法连接 Interception 驱动。请确认驱动已安装并重启电脑，且未被其他程序占用。";
+            if(logFailure)AppLog::instance().write(LogLevel::Error,"驱动","Interception 无法创建驱动连接，请检查安装、重启或其他程序占用情况。");
+            return false;
+        }return true;
     }
     QString id(int slot){wchar_t buffer[2048]{};if(!hardware(context,slot,buffer,sizeof(buffer)-sizeof(wchar_t)))return {};return QString::fromWCharArray(buffer);}
 };
@@ -78,6 +87,20 @@ bool activateOutputWindow(quint64 window,quint32 process) {
     return pid==process&&IsWindowVisible(target)&&!IsIconic(target)&&GetForegroundWindow()==target;
 }
 std::unique_ptr<KeyOutput> createKeyOutput(){return std::make_unique<WindowsKeyOutput>();}
+InterceptionStatus inspectInterception(){
+    Driver driver;InterceptionStatus result;
+    if(!driver.open(result.detail,false)){
+        result.state=driver.create&&driver.destroy&&driver.hardware&&driver.send
+            ?InterceptionState::DriverUnavailable:InterceptionState::RuntimeUnavailable;
+        return result;
+    }
+    for(int slot=1;slot<=10;++slot)if(!driver.id(slot).isEmpty())++result.keyboardCount;
+    result.state=result.keyboardCount?InterceptionState::Ready:InterceptionState::NoKeyboard;
+    result.detail=result.keyboardCount
+        ?QString("已连接 Interception 驱动，检测到 %1 个键盘通道。").arg(result.keyboardCount)
+        :QString("已连接 Interception 驱动，但未检测到键盘。请检查键盘连接后重新检测。");
+    return result;
+}
 DiscoveryResult discoverOutputKeyboards(){Driver driver;DiscoveryResult result;if(!driver.open(result.error))return result;
     for(int slot=1;slot<=10;++slot){auto id=driver.id(slot);if(id.isEmpty())continue;
         result.choices.push_back({QString("键盘 %1 · %2").arg(slot).arg(id),QString("interception:%1:%2").arg(slot).arg(id),QString("Interception 键盘通道 %1\n%2").arg(slot).arg(id)});}return result;}
@@ -86,6 +109,7 @@ DiscoveryResult discoverOutputKeyboards(){Driver driver;DiscoveryResult result;i
 namespace rock {
 bool activateOutputWindow(quint64,quint32){return false;}
 std::unique_ptr<KeyOutput> createKeyOutput(){return {};}
+InterceptionStatus inspectInterception(){return {InterceptionState::Unsupported,0,"Interception 驱动检测仅支持 Windows。"};}
 DiscoveryResult discoverOutputKeyboards(){return {{},"自动演奏仅支持 Windows。"};}
 }
 #endif

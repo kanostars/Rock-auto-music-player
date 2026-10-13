@@ -3,6 +3,7 @@
 #include "audio/audio_player.h"
 #include <QFutureWatcher>
 #include <QMainWindow>
+#include <QPointer>
 #include <QTimer>
 #include <memory>
 #include <optional>
@@ -19,6 +20,7 @@ class MiniPlayer;
 class SettingsPage;
 class PracticePage;
 class TimeSeekEdit;
+class LogDialog;
 class GlobalShortcut;
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -55,6 +57,7 @@ private:
     bool miniSeekResume_{},miniSeekPerformance_{};std::shared_ptr<Song> miniSeekSong_;
     QTabWidget* tabs_{};
     SettingsPage* appSettings_{};QPushButton* settingsNavigation_{};
+    QPushButton* logsButton_{};QPointer<LogDialog> logWindow_;
     QPushButton *headerLogo_{},*practiceBack_{};
     QPushButton* projectMenu_{};
     QString projectPath_;

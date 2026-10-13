@@ -1,10 +1,12 @@
 #include "performance_panel.h"
 #include "playback_icons.h"
 #include "theme.h"
+#include "app/app_log.h"
 #include "app/preferences.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QFileInfo>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -21,7 +23,18 @@ namespace rock {
 namespace {
 QLabel* text(const QString& value,const char* role){auto* w=new QLabel(value);w->setProperty("role",role);w->setTextFormat(Qt::PlainText);return w;}
 QPushButton* button(const QString& value,const char* name){auto* w=new QPushButton(value);w->setObjectName(name);w->setCursor(Qt::PointingHandCursor);return w;}
-
+QString performanceStateName(PerformanceState state){
+    switch(state){
+    case PerformanceState::Idle:return "空闲";
+    case PerformanceState::Countdown:return "开始倒计时";
+    case PerformanceState::Playing:return "正在演奏";
+    case PerformanceState::Paused:return "演奏暂停";
+    case PerformanceState::Finished:return "演奏完成";
+    case PerformanceState::Stopped:return "演奏终止";
+    case PerformanceState::Failed:return "演奏失败";
+    }
+    return {};
+}
 }
 PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
     setObjectName("performancePanel");Theme::setStyle(this,"QWidget#performancePanel {background:white;}");
@@ -97,6 +110,7 @@ void PerformancePanel::setLibrary(QListWidget* library){
     connect(library_->model(),&QAbstractItemModel::rowsRemoved,this,[this]{updateControls();});updateControls();
 }
 void PerformancePanel::setLibraryBusy(bool busy){libraryBusy_=busy;updateControls();}
+void PerformancePanel::setDriverInspectionActive(bool active){driverInspectionActive_=active;updateControls();}
 void PerformancePanel::resetQueue(){
     randomRemaining_.clear();songHistory_.clear();historyCursor_=-1;
     if(library_&&library_->currentIndex().isValid()){songHistory_.push_back(library_->currentIndex().row());historyCursor_=0;}
@@ -147,8 +161,9 @@ void PerformancePanel::switchSong(int row,bool continuePlaying,bool preview){
     else queueActive_=false;
     if(preview&&library_->currentRow()==row&&song_&&result_)emit previewStartRequested();
 }
-void PerformancePanel::setSong(std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result,const QString&,const Settings& settings){
+void PerformancePanel::setSong(std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result,const QString& path,const Settings& settings){
     stopPerformance();const bool changed=song_!=song;song_=std::move(song);result_=std::move(result);settings_=settings;
+    songName_=QFileInfo(path).fileName();
     if(changed){position_=0;rangeStart_=0;rangeEnd_=-1;}
     if(!song_||!result_){song_.reset();result_.reset();position_=0;state_->setText("曲目库为空，请导入 MIDI。");}
     else if(changed&&!switchingSong_)state_->setText("请刷新并选择输出键盘和目标窗口。");
@@ -159,13 +174,15 @@ void PerformancePanel::setPreviewPosition(double seconds){
     emit sourcePositionChanged(position_);
 }
 void PerformancePanel::refreshDevices(bool keyboard) {
-    if(running_)return;
+    if(running_||(keyboard&&driverInspectionActive_))return;
     auto& watcher=keyboard?keyboardWatcher_:windowWatcher_;if(watcher.isRunning())return;
+    AppLog::instance().write(LogLevel::Info,"设备",keyboard?"开始查找输出键盘。":"开始查找目标窗口。");
     auto* combo=keyboard?keyboards_:windows_;auto* refresh=keyboard?refreshKeyboards_:refreshWindows_;
     auto* status=keyboard?keyboardStatus_:windowStatus_;
     {const QSignalBlocker blocker(combo);combo->clear();combo->setCurrentIndex(-1);}
     combo->setToolTip({});combo->setEnabled(false);refresh->setEnabled(false);
     Theme::setStyle(status,"color:#8397a3;");status->setText(keyboard?"正在查找键盘…":"正在查找窗口…");
+    if(keyboard)emit keyboardDiscoveryActiveChanged(true);
     const auto query=keyboard?discoverKeyboards:discoverWindows;
     // The worker owns its callable and never touches widgets, including after this page is closed.
     watcher.setFuture(QtConcurrent::run([query]{
@@ -177,6 +194,9 @@ void PerformancePanel::discoveryFinished(bool keyboard) {
     auto* combo=keyboard?keyboards_:windows_;auto* refresh=keyboard?refreshKeyboards_:refreshWindows_;
     auto* status=keyboard?keyboardStatus_:windowStatus_;
     const auto result=(keyboard?keyboardWatcher_:windowWatcher_).result();refresh->setEnabled(true);
+    const QString name=keyboard?"输出键盘":"目标窗口";
+    AppLog::instance().write(!result.error.isEmpty()?LogLevel::Error:result.choices.empty()?LogLevel::Warning:LogLevel::Info,"设备",
+        result.error.isEmpty()?QString("%1查找完成，找到 %2 个。").arg(name).arg(static_cast<int>(result.choices.size())):QString("%1查找失败：%2").arg(name,result.error));
     {const QSignalBlocker blocker(combo);
         for(const auto& choice:result.choices) {
             combo->addItem(choice.label,choice.id);int row=combo->count()-1;
@@ -192,13 +212,14 @@ void PerformancePanel::discoveryFinished(bool keyboard) {
         combo->setEnabled(true);status->setText(QString("找到 %1 个%2，请手动选择。").arg(combo->count()).arg(keyboard?"键盘":"窗口"));Theme::setStyle(status,"color:#178e80;");
     }
     updateControls();
+    if(keyboard)emit keyboardDiscoveryActiveChanged(false);
 }
 PerformancePanel::~PerformancePanel(){controller_.stop();}
 void PerformancePanel::stopPerformance(){if(!switchingSong_){queueActive_=false;resetQueue();}controller_.stop();if(timer_)updatePerformance();}
 void PerformancePanel::updateControls(){
     const bool available=song_&&result_&&keyboards_->currentIndex()>=0&&windows_->currentIndex()>=0;
-    start_->setEnabled(running_||available);
-    refreshKeyboards_->setEnabled(!running_&&!keyboardWatcher_.isRunning());refreshWindows_->setEnabled(!running_&&!windowWatcher_.isRunning());
+    start_->setEnabled(running_||(available&&!driverInspectionActive_));
+    refreshKeyboards_->setEnabled(!running_&&!driverInspectionActive_&&!keyboardWatcher_.isRunning());refreshWindows_->setEnabled(!running_&&!windowWatcher_.isRunning());
     keyboards_->setEnabled(!running_&&keyboards_->count()>0);windows_->setEnabled(!running_&&windows_->count()>0);
     activate_->setEnabled(!running_);
     countdown_->setEnabled(!running_);
@@ -210,7 +231,16 @@ void PerformancePanel::updateControls(){
     if(libraryBusy_)start_->setEnabled(false);
 }
 void PerformancePanel::updatePerformance(){
-    const auto s=controller_.snapshot();snapshot_=s;const bool wasRunning=running_;running_=s.active();
+    const auto s=controller_.snapshot();
+    // Record transitions once, including pause reasons supplied by global shortcuts or target checks.
+    if(s.state!=snapshot_.state||s.message!=snapshot_.message){
+        const auto level=s.state==PerformanceState::Failed?LogLevel::Error:
+            s.state==PerformanceState::Paused&&s.message.contains("目标窗口")?LogLevel::Warning:LogLevel::Info;
+        AppLog::instance().write(level,"自动演奏",QString("%1 · %2 秒%3")
+            .arg(performanceStateName(s.state)).arg(s.position,0,'f',2)
+            .arg(s.message.isEmpty()?QString():QString(" · %1").arg(s.message)));
+    }
+    snapshot_=s;const bool wasRunning=running_;running_=s.active();
     if(wasRunning||running_)setPreviewPosition(s.position);
     if(!s.message.isEmpty())state_->setText(s.state==PerformanceState::Countdown?QString("倒计时 %1 秒 · %2").arg(static_cast<int>(std::ceil(s.countdown))).arg(s.message):s.message);
     Theme::setStyle(state_,s.state==PerformanceState::Failed?"color:#bd4f5b;":"color:#178e80;");
@@ -225,6 +255,9 @@ void PerformancePanel::updatePerformance(){
 }
 void PerformancePanel::startPerformance(){
     if(running_){controller_.togglePause();updatePerformance();return;}
+    if(driverInspectionActive_){
+        state_->setText("正在检测 Interception 驱动，请稍后开始演奏。");Theme::setStyle(state_,"color:#a77722;");emit statusChanged(state_->text());return;
+    }
     resetQueue();queueActive_=true;
     if(result_&&(position_<rangeStart_||position_>=(rangeEnd_<0?result_->duration:rangeEnd_)))setPreviewPosition(rangeStart_);
     beginSong();
@@ -235,27 +268,35 @@ void PerformancePanel::seekPerformance(double seconds){
     const double end=rangeEnd_<0?result_->duration:std::min(rangeEnd_,result_->duration);
     if(end<=rangeStart_){controller_.cancelSeek();return;}
     const double position=std::clamp(seconds,rangeStart_,end);
+    AppLog::instance().write(LogLevel::Info,"自动演奏",QString("定位到 %1 秒。").arg(position,0,'f',2));
     try{
         // The new plan includes earlier strikes when rewinding. At the exact
         // range end, use an empty tail and let the engine finish naturally.
         auto plan=makePerformancePlan(*result_,std::min(position,std::nextafter(end,rangeStart_)),settings_.holdMs,settings_.gapMs,end);
         plan.start=position;controller_.seek(std::move(plan));updatePerformance();
     }catch(const std::exception& e){
+        AppLog::instance().write(LogLevel::Error,"自动演奏",QString("定位失败：%1").arg(QString::fromUtf8(e.what())));
         controller_.cancelSeek(QString::fromUtf8(e.what()));updatePerformance();
         Theme::setStyle(state_,"color:#bd4f5b;");
     }
 }
 void PerformancePanel::beginSong(){
+    if(driverInspectionActive_){
+        queueActive_=false;state_->setText("正在检测 Interception 驱动，请稍后开始演奏。");Theme::setStyle(state_,"color:#a77722;");emit statusChanged(state_->text());return;
+    }
     if(libraryBusy_||!song_||!result_||keyboards_->currentIndex()<0||windows_->currentIndex()<0){queueActive_=false;return;}
     QString error;
     try{auto plan=makePerformancePlan(*result_,position_,settings_.holdMs,settings_.gapMs,rangeEnd_);
         countdown_->interpretText();plan.countdownSeconds=countdown_->value();
+        AppLog::instance().write(LogLevel::Info,"自动演奏",QString("开始演奏 %1 · 起点 %2 秒 · 速度 %3× · 倒计时 %4 秒 · 按下 %5 ms / 间隔 %6 ms")
+            .arg(songName_).arg(position_,0,'f',2).arg(settings_.speed,0,'g',4).arg(plan.countdownSeconds).arg(settings_.holdMs).arg(settings_.gapMs));
         OutputTarget target{keyboards_->currentData().toString(),windows_->currentData().toULongLong(),windows_->currentData(Qt::UserRole+1).toUInt()};
         // Finish local focus changes before handing the foreground to the target.
         running_=true;updateControls();emit activeChanged(true);
         if(activate_->isChecked())emit targetActivationRequested();
         if(controller_.start(std::move(plan),target,activate_->isChecked(),error)){timer_->start();updatePerformance();return;}
     }catch(const std::exception& e){error=QString::fromUtf8(e.what());}
+    AppLog::instance().write(LogLevel::Error,"自动演奏",QString("演奏启动失败：%1").arg(error));
     queueActive_=false;running_=false;updateControls();emit activeChanged(false);
     snapshot_.state=PerformanceState::Failed;snapshot_.message=error;
     state_->setText(error);Theme::setStyle(state_,"color:#bd4f5b;");emit statusChanged(error);

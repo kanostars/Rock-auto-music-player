@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(RockAutoMusicPlay VERSION 1.2.2 LANGUAGES C CXX)
+project(RockAutoMusicPlay VERSION 1.2.3 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -34,11 +34,15 @@ set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
     src/app/preferences.cpp src/app/preferences.h
+    src/app/app_log.cpp src/app/app_log.h
     src/app/project.cpp src/app/project.h
     src/app/export_paths.cpp src/app/export_paths.h
     src/ui/project_export_dialog.cpp src/ui/project_export_dialog.h
     src/ui/theme.cpp src/ui/settings_page.cpp src/ui/settings_page.h
+    src/ui/log_dialog.cpp src/ui/log_dialog.h
     src/ui/practice_page.cpp src/ui/practice_page.h
+    src/ui/practice_mini.cpp src/ui/practice_mini.h
+    src/platform/practice_input.cpp src/platform/practice_input.h
     src/ui/practice_settings_dialog.cpp src/ui/practice_settings_dialog.h
     src/ui/time_seek_edit.cpp src/ui/time_seek_edit.h
     src/ui/number_score_view.cpp src/ui/number_score_view.h

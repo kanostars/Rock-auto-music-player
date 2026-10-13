@@ -1,11 +1,13 @@
 #include "practice_page.h"
 #include "app/preferences.h"
+#include "app/app_log.h"
 #include "handpan_test.h"
 #include "piano_roll.h"
 #include "playback_icons.h"
 #include "theme.h"
 #include "time_seek_edit.h"
 #include "number_score_view.h"
+#include "practice_mini.h"
 #include "score_archive.h"
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -46,6 +48,8 @@ QLabel* label(const QString& text,const char* role){auto* value=new QLabel(text)
 QPushButton* button(const QString& text,const char* name){auto* value=new QPushButton(text);value->setObjectName(name);value->setCursor(Qt::PointingHandCursor);return value;}
 QFrame* panel(const char* name="panel"){auto* value=new QFrame;value->setObjectName(name);return value;}
 const std::array<const char*,9> degrees{"低音 6","3","4","5","6","7","高音 1","高音 2","高音 3"};
+void logPractice(LogLevel level,const QString& message){AppLog::instance().write(level,"歌曲练习",message);}
+QString practiceMode(bool following){return following?"跟弹练习":"自动预览";}
 class PracticeProgressSlider final:public QSlider {
 public:
     PracticeProgressSlider():QSlider(Qt::Horizontal){}
@@ -94,15 +98,19 @@ PracticePage::PracticePage(QWidget* parent):QWidget(parent){
     auto* volumeIcon=new QLabel;volumeIcon->setPixmap(playlistIcon(PlaylistIcon::Volume).pixmap(22,22));controls->addWidget(volumeIcon);
     connect(&Preferences::instance(),&Preferences::themeChanged,this,[volumeIcon]{volumeIcon->setPixmap(playlistIcon(PlaylistIcon::Volume).pixmap(22,22));});
     volume_=new QSlider(Qt::Horizontal);volume_->setObjectName("practiceVolume");volume_->setAccessibleName("练习音量");volume_->setRange(0,100);volume_->setValue(60);volume_->setFixedWidth(88);controls->addWidget(volume_);
+    miniButton_=button("小窗","practiceMiniButton");controls->addWidget(miniButton_);
     auto* settings=button("练习设置 / 键位","practiceSettingsButton");controls->addWidget(settings);page->addWidget(controls->parentWidget());
     connect(play_,&QPushButton::clicked,this,[this]{if(running_)pause();else start();setFocus();});
-    connect(restart,&QPushButton::clicked,this,[this]{const bool resume=running_;scoreFollow_=true;followPage_->setEnabled(false);pause();practice_.seek(rangeStart());updatePosition(rangeStart(),true);feedback_.clear();if(resume)start();else updatePrompt();setFocus();});
-    connect(volume_,&QSlider::valueChanged,this,[this](int value){audio_.setVolume(value/100.f);live_.setVolume(value/100.f);metronome_.setVolume(value/100.f);volume_->setToolTip(QString("音量 %1%").arg(value));});
-    connect(speed_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{if(running_&&!followingMode_){pause();start();}else if(running_)updateMetronomeRhythm();setFocus();});
+    connect(restart,&QPushButton::clicked,this,[this]{this->restart();setFocus();});
+    connect(miniButton_,&QPushButton::clicked,this,[this]{enterMiniMode(screen());});
+    auto updateMiniShortcut=[this]{miniButton_->setToolTip("进入游戏跟练小窗（"+Preferences::instance().shortcutText(ShortcutAction::MiniMode)+" 切换）");};
+    connect(&Preferences::instance(),&Preferences::shortcutsChanged,this,updateMiniShortcut);updateMiniShortcut();
+    connect(volume_,&QSlider::valueChanged,this,[this](int value){if(!miniMode_)miniPreviewVolume_=value;applyVolume();volume_->setToolTip(QString("音量 %1%").arg(value));updatePrompt();});
+    connect(speed_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{logPractice(LogLevel::Info,QString("播放倍速调整为 %1×").arg(speed_->currentData().toDouble()));if(running_&&!followingMode_){pause();start();}else if(running_)updateMetronomeRhythm();setFocus();});
     connect(settings,&QPushButton::clicked,this,&PracticePage::openSettings);
     connect(progress_,&QSlider::sliderPressed,this,[this]{seekResume_=running_;pause();});
     connect(progress_,&QSlider::sliderMoved,this,[this](int value){seek(result_?result_->duration*value/100000.0:0,false);});
-    connect(progress_,&QSlider::sliderReleased,this,[this]{seek(result_?result_->duration*progress_->value()/100000.0:0,false);if(seekResume_&&(options_.loopEnabled||position_<rangeEnd()))start();seekResume_=false;setFocus();});
+    connect(progress_,&QSlider::sliderReleased,this,[this]{seek(result_?result_->duration*progress_->value()/100000.0:0,false);if(result_)logPractice(LogLevel::Info,QString("歌曲进度定位：%1，%2 秒").arg(songName_).arg(position_,0,'f',2));if(seekResume_&&(options_.loopEnabled||position_<rangeEnd()))start();seekResume_=false;setFocus();});
     connect(progress_,&QSlider::valueChanged,this,[this](int value){if(!progress_->isSliderDown())seek(result_?result_->duration*value/100000.0:0);});
 
     auto* body=new QHBoxLayout;body->setSpacing(14);
@@ -138,7 +146,7 @@ PracticePage::PracticePage(QWidget* parent):QWidget(parent){
     connect(previousPage_,&QPushButton::clicked,this,[this]{browseScorePage(numberScore_->currentPage()-1);setFocus();});
     connect(nextPage_,&QPushButton::clicked,this,[this]{browseScorePage(numberScore_->currentPage()+1);setFocus();});
     connect(scorePage_,qOverload<int>(&QSpinBox::valueChanged),this,[this](int page){browseScorePage(page-1);});
-    connect(followPage_,&QPushButton::clicked,this,[this]{scoreFollow_=true;numberScore_->setPosition(position_,true,true);followPage_->setEnabled(false);setFocus();});
+    connect(followPage_,&QPushButton::clicked,this,[this]{scoreFollow_=true;updateScorePosition(true);followPage_->setEnabled(false);setFocus();});
     connect(downloadScore_,&QPushButton::clicked,this,[this]{downloadScore(false);});
     connect(downloadScore_,&QPushButton::customContextMenuRequested,this,[this]{downloadScore(true);});
     refreshScorePages(0,0);
@@ -160,10 +168,15 @@ PracticePage::PracticePage(QWidget* parent):QWidget(parent){
     for(int target=0;target<9;++target){auto* chip=label(QString::fromUtf8(degrees[target])+" · "+QChar(keys[target]),"practiceKey");chip->setObjectName("practiceKey_"+QString(QChar(keys[target])));chip->setAlignment(Qt::AlignCenter);chip->setWordWrap(false);chips_[target]=chip;chips->addWidget(chip,target/3,target%3);chip->hide();}
     promptLayout->addLayout(chips);rightLayout->addWidget(prompt);body->addWidget(right,1);page->addLayout(body,1);
     timer_.setInterval(16);connect(&timer_,&QTimer::timeout,this,&PracticePage::tick);
-    connect(qApp,&QGuiApplication::applicationStateChanged,this,[this](Qt::ApplicationState state){if(state!=Qt::ApplicationActive&&isVisible())pause();});
+    connect(qApp,&QGuiApplication::applicationStateChanged,this,[this](Qt::ApplicationState state){if(state==Qt::ApplicationSuspended||(state!=Qt::ApplicationActive&&isVisible()&&!miniMode_))pause();});
+    connect(&miniInput_,&PracticeInput::keyChanged,this,[this](int target,bool down){
+        if(!miniMode_||!running_||!followingMode_)return;
+        if(QApplication::activeModalWidget()){pause();return;}
+        if(down)press(target,false);else release(target,false);
+    });
     qApp->installEventFilter(this);updateKeyLabels();setMode(false);setVolume(60);
 }
-PracticePage::~PracticePage(){qApp->removeEventFilter(this);stop();}
+PracticePage::~PracticePage(){qApp->removeEventFilter(this);miniMode_=false;stop();delete mini_;}
 void PracticePage::setSong(const QString& name,std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result,const Settings& settings){
     stop();song_=std::move(song);result_=std::move(result);settings_=settings;
     songName_=name;scoreReady_=false;scoreFollow_=true;numberScore_->setSong({},nullptr,nullptr,settings_);setScoreMode(false);
@@ -175,32 +188,94 @@ void PracticePage::setSong(const QString& name,std::shared_ptr<const Song> song,
     pageSubtitle_=QString("九键手碟 · %1 组 · 参考速度 %2 BPM").arg(practice_.groups().size()).arg(bpm*settings.speed,0,'f',1);
     timeline_->setMusic(song_,result_);timeline_->setPracticeMode(true,settings);timeline_->setZoom(75);timeline_->setPlaybackRange(0,-1);timeline_->setEditingEnabled(false);updateKeyLabels();
     {const QSignalBlocker blocker(speed_);speed_->setCurrentIndex(3);}setMode(false);updatePosition(0);updatePrompt();
+    logPractice(LogLevel::Info,QString("进入歌曲练习：%1，%2 组，时长 %3 秒").arg(songName_).arg(practice_.groups().size()).arg(result_?result_->duration:0,0,'f',2));
 }
-void PracticePage::setVolume(int value){volume_->setValue(std::clamp(value,0,100));audio_.setVolume(volume_->value()/100.f);live_.setVolume(volume_->value()/100.f);metronome_.setVolume(volume_->value()/100.f);}
-void PracticePage::stop(){clock_->cancelEditing();pause();if(settingsDialog_)settingsDialog_->close();}
+void PracticePage::setVolume(int value){
+    volume_->setValue(std::clamp(value,0,100));
+    if(!miniMode_)miniPreviewVolume_=volume_->value();
+    applyVolume();updatePrompt();
+}
+int PracticePage::outputVolume() const{
+    return miniMode_?(followingMode_?miniFollowingVolume_:miniPreviewVolume_):volume_->value();
+}
+void PracticePage::applyVolume(){
+    const float level=outputVolume()/100.f;
+    audio_.setVolume(level);live_.setVolume(level);metronome_.setVolume(level);
+}
+void PracticePage::stop(){const bool active=running_||miniMode_;clock_->cancelEditing();if(miniMode_)leaveMiniMode();else pause();if(settingsDialog_)settingsDialog_->close();if(active)logPractice(LogLevel::Info,QString("停止歌曲练习：%1，停留于 %2 秒").arg(songName_).arg(position_,0,'f',2));}
+void PracticePage::enterMiniMode(QScreen* preferred){
+    if(miniMode_||!song_||!result_||QApplication::activeModalWidget())return;
+    clock_->cancelEditing();
+    if(!mini_){
+        mini_=new PracticeMini;
+        connect(mini_,&PracticeMini::playRequested,this,[this]{if(running_)pause();else start();});
+        connect(mini_,&PracticeMini::restartRequested,this,&PracticePage::restart);
+        connect(mini_,&PracticeMini::followingRequested,this,&PracticePage::setMode);
+        connect(mini_,&PracticeMini::restoreRequested,this,[this]{emit miniRestoreRequested();});
+        connect(mini_,&PracticeMini::seekStarted,this,&PracticePage::beginMiniSeek);
+        connect(mini_,&PracticeMini::seekRequested,this,&PracticePage::finishMiniSeek);
+        connect(mini_,&PracticeMini::volumeRequested,this,[this](int value){
+            if(!miniMode_)return;
+            (followingMode_?miniFollowingVolume_:miniPreviewVolume_)=std::clamp(value,0,100);
+            applyVolume();updatePrompt();
+        });
+    }
+    try{mini_->setSong(songName_,song_,result_,settings_);}
+    catch(const std::exception& error){logPractice(LogLevel::Error,"打开跟练小窗失败："+QString::fromUtf8(error.what()));QMessageBox::warning(this,"无法打开跟练小窗",QString::fromUtf8(error.what()));return;}
+    clearInput();miniMode_=true;applyVolume();
+    if(running_&&followingMode_){
+        QString error;if(!live_.start(error)){feedback_=error+" 仍可进行按键跟练。";logPractice(LogLevel::Warning,"跟练试听输出不可用："+error);}
+        if(!startMiniInput())pause();
+    }
+    updatePrompt();mini_->present(preferred);emit miniModeChanged(true);
+    logPractice(LogLevel::Info,QString("打开游戏跟练小窗：%1，%2，音量 %3%").arg(songName_,practiceMode(followingMode_)).arg(outputVolume()));
+}
+void PracticePage::leaveMiniMode(){
+    if(!miniMode_)return;
+    pause();if(mini_)mini_->hide();miniMode_=false;applyVolume();
+    emit miniModeChanged(false);
+    logPractice(LogLevel::Info,"关闭游戏跟练小窗："+songName_);
+}
+bool PracticePage::startMiniInput(){
+    if(!miniMode_||!followingMode_)return true;
+    QString error;if(miniInput_.start(options_.inputKeys,error))return true;
+    feedback_=error;logPractice(LogLevel::Error,"跟练小窗键盘监听启动失败："+error);return false;
+}
 void PracticePage::clearInput(){keyboardHeld_.fill(false);mouseHeld_.fill(false);practice_.clearHeld();live_.stop();}
 void PracticePage::pause(){
+    const bool wasRunning=running_;
+    miniSeeking_=false;miniSeekResume_=false;
+    miniInput_.stop();
     audio_.pause();metronome_.stop();
     if(running_&&!followingMode_&&result_)updatePosition(std::min(audio_.position(),result_->duration));
     running_=false;timer_.stop();clearInput();updatePlayButton();updatePrompt();
+    if(wasRunning)logPractice(LogLevel::Info,QString("暂停%1：%2，%3 秒").arg(practiceMode(followingMode_),songName_).arg(position_,0,'f',2));
 }
-void PracticePage::setMode(bool following){pause();followingMode_=following;automatic_->setChecked(!following);following_->setChecked(following);practice_.seek(position_);alignFollowingGroup();feedback_.clear();updatePrompt();}
+void PracticePage::setMode(bool following){const bool changed=followingMode_!=following;pause();followingMode_=following;applyVolume();automatic_->setChecked(!following);following_->setChecked(following);practice_.seek(position_);alignFollowingGroup();feedback_.clear();updatePrompt();if(changed)logPractice(LogLevel::Info,"练习模式切换为 "+practiceMode(following));}
 void PracticePage::start(){
-    if(!song_||!result_||practice_.groups().empty())return;
-    scoreFollow_=true;followPage_->setEnabled(false);if(scoreReady_)numberScore_->setPosition(position_,true,true);
+    if(!song_||!result_||practice_.groups().empty()||QApplication::activeModalWidget())return;
+    scoreFollow_=true;followPage_->setEnabled(false);updateScorePosition(true);
     feedback_.clear();clearInput();
     if(position_<rangeStart()||position_>=rangeEnd()||(followingMode_&&practice_.finished())){practice_.seek(rangeStart());updatePosition(rangeStart());}
     if(followingMode_){
         if(practice_.finished())practice_.seek(position_);
         if(options_.loopEnabled&&!practice_.finished()&&practice_.groups()[practice_.index()].start>=rangeEnd())practice_.seek(rangeStart());
         if(!practice_.finished())updatePosition(practice_.groups()[practice_.index()].start);
-        QString error;if(!live_.start(error))feedback_=error+" 仍可进行按键跟练。";
+        QString error;if(!live_.start(error)){feedback_=error+" 仍可进行按键跟练。";logPractice(LogLevel::Warning,"跟练试听输出不可用："+error);}
         running_=true;
+        if(!startMiniInput()){running_=false;clearInput();updatePlayButton();updatePrompt();return;}
     }else{
-        QString error;if(!audio_.play(*song_,*result_,position_,error,rangeEnd(),speed_->currentData().toDouble(),true)){feedback_=error;updatePrompt();return;}
+        QString error;if(!audio_.play(*song_,*result_,position_,error,rangeEnd(),speed_->currentData().toDouble(),true)){feedback_=error;logPractice(LogLevel::Error,"启动歌曲预览失败："+error);updatePrompt();return;}
         running_=true;timer_.start();
     }
     startMetronome();updatePlayButton();updatePrompt();
+    logPractice(LogLevel::Info,QString("开始%1：%2，%3 秒，%4×，音量 %5%").arg(practiceMode(followingMode_),songName_).arg(position_,0,'f',2).arg(speed_->currentData().toDouble()).arg(outputVolume()));
+}
+void PracticePage::restart(){
+    const bool resume=running_;scoreFollow_=true;followPage_->setEnabled(false);pause();
+    practice_.seek(rangeStart());updatePosition(rangeStart(),true);feedback_.clear();
+    if(resume)start();else updatePrompt();
+    logPractice(LogLevel::Info,QString("歌曲练习从头开始：%1，%2 秒").arg(songName_).arg(rangeStart(),0,'f',2));
 }
 void PracticePage::seek(double seconds,bool resume){
     if(!result_||!std::isfinite(seconds))return;
@@ -209,7 +284,20 @@ void PracticePage::seek(double seconds,bool resume){
     if(options_.loopEnabled)seconds=std::clamp(seconds,rangeStart(),rangeEnd());
     updatePosition(seconds,true);practice_.seek(position_);feedback_.clear();
     alignFollowingGroup();
+    if(resume)logPractice(LogLevel::Info,QString("歌曲进度定位：%1，%2 秒").arg(songName_).arg(position_,0,'f',2));
     if(wasRunning&&resume&&(options_.loopEnabled||position_<rangeEnd()))start();else updatePrompt();
+}
+void PracticePage::beginMiniSeek(){
+    if(!miniMode_||!result_||result_->duration<=0)return;
+    const bool resume=running_;pause();miniSeeking_=true;miniSeekResume_=resume;
+}
+void PracticePage::finishMiniSeek(double seconds){
+    if(!miniMode_||!miniSeeking_){updatePrompt();return;}
+    const bool resume=miniSeekResume_;miniSeeking_=false;miniSeekResume_=false;
+    if(!std::isfinite(seconds)){updatePrompt();return;}
+    seek(seconds,false);
+    logPractice(LogLevel::Info,QString("小窗歌曲进度定位：%1，%2 秒").arg(songName_).arg(position_,0,'f',2));
+    if(resume&&(options_.loopEnabled||position_<rangeEnd()))start();
 }
 void PracticePage::tick(){
     if(!running_||followingMode_||!result_)return;
@@ -217,16 +305,21 @@ void PracticePage::tick(){
     if(audio_.finished()||position_>=rangeEnd()){
         pause();
         if(options_.loopEnabled){practice_.seek(rangeStart());updatePosition(rangeStart());start();}
-        else{updatePosition(result_->duration);feedback_="预览结束，可以从头播放或切换到跟弹练习。";}
+        else{updatePosition(result_->duration);feedback_="预览结束，可以从头播放或切换到跟弹练习。";logPractice(LogLevel::Info,"歌曲预览完成："+songName_);}
     }
-    else if(!audio_.running()){pause();feedback_="音频输出已中断，请检查系统输出设备后继续。";}
+    else if(!audio_.running()){pause();feedback_="音频输出已中断，请检查系统输出设备后继续。";logPractice(LogLevel::Warning,"歌曲预览音频输出中断："+songName_);}
     updatePrompt();
 }
 void PracticePage::updatePosition(double seconds,bool focusScore){
     position_=std::clamp(seconds,0.0,result_?std::max(0.0,result_->duration):0.0);timeline_->setPlayhead(position_,true);
     const QSignalBlocker blocker(progress_);progress_->setValue(result_&&result_->duration>0?static_cast<int>(position_/result_->duration*100000):0);
     clock_->setPosition(position_,result_?result_->duration:0);
-    if(scoreReady_)numberScore_->setPosition(position_,scoreFollow_,focusScore);
+    updateScorePosition(focusScore);
+}
+void PracticePage::updateScorePosition(bool forceFocus){
+    if(!scoreReady_)return;
+    const int group=followingMode_&&!practice_.finished()?static_cast<int>(practice_.index()):-1;
+    numberScore_->setPosition(position_,scoreFollow_,forceFocus,group);
 }
 void PracticePage::updatePlayButton(){play_->setIcon(playlistIcon(running_?PlaylistIcon::Pause:PlaylistIcon::Play,true));play_->setAccessibleName(running_?"暂停练习":"开始练习");play_->setToolTip(running_?"暂停":"播放 / 开始跟弹");}
 void PracticePage::updatePrompt(){
@@ -266,8 +359,23 @@ void PracticePage::updatePrompt(){
     }
     shownMask_=chipMask;
     play_->setEnabled(!groups.empty());
+    miniButton_->setEnabled(song_&&result_&&!groups.empty());
+    updateScorePosition();
+    if(miniMode_&&mini_){
+        PracticeMiniState state;state.title=songName_;state.status=title;state.hint=hint;state.progress=groupCount_->text();
+        state.keys=chipMask;state.matched=matched;state.inputKeys=options_.inputKeys;
+        state.following=followingMode_;state.playing=running_;state.canPlay=!groups.empty();
+        state.practiceGroup=followingMode_&&!practice_.finished()?static_cast<int>(practice_.index()):-1;
+        state.position=followingMode_&&!practice_.finished()?groups[practice_.index()].start:position_;
+        state.playbackPosition=position_;state.duration=result_?result_->duration:0;state.volume=outputVolume();
+        mini_->setState(state);
+    }
 }
-bool PracticePage::acceptsInput() const{return isVisible()&&window()->isActiveWindow()&&!QApplication::activeModalWidget()&&QGuiApplication::applicationState()==Qt::ApplicationActive;}
+bool PracticePage::acceptsInput() const{
+    if(QApplication::activeModalWidget())return false;
+    if(miniMode_)return mini_&&mini_->isVisible()&&running_&&followingMode_;
+    return isVisible()&&window()->isActiveWindow()&&QGuiApplication::applicationState()==Qt::ApplicationActive;
+}
 void PracticePage::press(int target,bool mouse){
     if(target<0||target>=9||!acceptsInput())return;auto& held=mouse?mouseHeld_:keyboardHeld_;if(held[target])return;
     const bool alreadyHeld=keyboardHeld_[target]||mouseHeld_[target];held[target]=true;
@@ -280,7 +388,7 @@ void PracticePage::press(int target,bool mouse){
                 scoreFollow_=true;followPage_->setEnabled(false);
                 if(options_.loopEnabled&&(practice_.finished()||practice_.groups()[practice_.index()].start>=rangeEnd()))practice_.loopTo(rangeStart());
                 if(!practice_.finished()){updatePosition(practice_.groups()[practice_.index()].start);updateMetronomeRhythm();}
-                else{running_=false;metronome_.stop();updatePosition(result_?result_->duration:0);updatePlayButton();}
+                else{running_=false;miniInput_.stop();keyboardHeld_.fill(false);mouseHeld_.fill(false);practice_.clearHeld();metronome_.stop();updatePosition(result_?result_->duration:0);updatePlayButton();logPractice(LogLevel::Info,"跟弹练习完成："+songName_);}
             }
         }
     }
@@ -288,6 +396,11 @@ void PracticePage::press(int target,bool mouse){
 }
 void PracticePage::release(int target,bool mouse){if(target<0||target>=9)return;(mouse?mouseHeld_:keyboardHeld_)[target]=false;if(!keyboardHeld_[target]&&!mouseHeld_[target])practice_.release(target);updatePrompt();}
 bool PracticePage::eventFilter(QObject* object,QEvent* event){
+    if(miniMode_){
+        auto* widget=qobject_cast<QWidget*>(object);
+        if(event->type()==QEvent::Show&&widget&&widget->isWindow()&&(widget->isModal()||widget->windowType()==Qt::Popup))pause();
+        return false;
+    }
     if(!isVisible())return false;
     if(object==window()&&(event->type()==QEvent::WindowDeactivate||event->type()==QEvent::Hide||event->type()==QEvent::Close)){pause();return false;}
     if(event->type()!=QEvent::KeyPress&&event->type()!=QEvent::KeyRelease&&event->type()!=QEvent::ShortcutOverride)return false;
@@ -301,8 +414,9 @@ bool PracticePage::eventFilter(QObject* object,QEvent* event){
     if(!key->isAutoRepeat()){if(event->type()==QEvent::KeyPress)press(target,false);else if(event->type()==QEvent::KeyRelease)release(target,false);}
     key->accept();return true;
 }
-void PracticePage::hideEvent(QHideEvent* event){stop();QWidget::hideEvent(event);}
+void PracticePage::hideEvent(QHideEvent* event){if(!miniMode_)stop();QWidget::hideEvent(event);}
 void PracticePage::setScoreMode(bool numbers){
+    const bool changed=scoreViews_->currentIndex()!=(numbers?1:0);
     if(numbers&&!scoreReady_){
         if(!song_||!result_){timelineMode_->setChecked(true);return;}
         QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -311,13 +425,15 @@ void PracticePage::setScoreMode(bool numbers){
         catch(const std::exception& e){error=QString::fromUtf8(e.what());}
         QApplication::restoreOverrideCursor();
         if(!scoreReady_){
+            logPractice(LogLevel::Error,"生成数字简谱失败："+(error.isEmpty()?QString("当前曲目没有可显示的简谱。"):error));
             setScoreMode(false);QMessageBox::warning(this,"无法生成简谱",error.isEmpty()?"当前曲目没有可显示的简谱。":error);return;
         }
     }
     timelineMode_->setChecked(!numbers);numberMode_->setChecked(numbers);
     scoreViews_->setCurrentIndex(numbers?1:0);downloadScore_->setVisible(numbers);
     scoreDisplayHint_->setText(numbers?"按小节分页":"按键 / 音高");
-    if(numbers){scoreFollow_=true;numberScore_->setPosition(position_,true,true);refreshScorePages(numberScore_->currentPage(),numberScore_->pageCount());}
+    if(numbers){scoreFollow_=true;updateScorePosition(true);refreshScorePages(numberScore_->currentPage(),numberScore_->pageCount());}
+    if(changed)logPractice(LogLevel::Info,numbers?"曲谱显示切换为数字简谱":"曲谱显示切换为时间轴");
 }
 void PracticePage::browseScorePage(int page){
     if(!scoreReady_||page<0||page>=numberScore_->pageCount())return;
@@ -343,20 +459,22 @@ void PracticePage::downloadScore(bool allPages){
     dialog.selectFile(allPages?base+"_简谱.zip":base+QString("_简谱_%1.png").arg(page+1,3,10,QChar('0')));
     if(dialog.exec()!=QDialog::Accepted||dialog.selectedFiles().isEmpty())return;
     const auto path=dialog.selectedFiles().front();QString error;bool success=false;
+    logPractice(LogLevel::Info,QString("导出%1简谱：%2").arg(allPages?"全部页面":"当前页",path));
     if(allPages){
         QProgressDialog progress("正在生成简谱 PNG…","取消",0,count,this);progress.setObjectName("practiceScoreExportProgress");
         progress.setWindowModality(Qt::WindowModal);progress.setMinimumDuration(0);progress.setAutoClose(false);progress.setAutoReset(false);
         success=writeScoreArchive(path,count,[this](int index){return numberScore_->renderPage(index);},songName_,error,
             [&progress](int done,int total){progress.setLabelText(QString("正在生成简谱 PNG · %1 / %2 页").arg(done).arg(total));progress.setValue(done);QApplication::processEvents();return !progress.wasCanceled();});
-        if(progress.wasCanceled()){feedback_="已取消下载简谱。";updatePrompt();return;}
+        if(progress.wasCanceled()){feedback_="已取消下载简谱。";logPractice(LogLevel::Info,"已取消导出全部简谱："+path);updatePrompt();return;}
     }else{
         QSaveFile file(path);const auto image=numberScore_->renderPage(page);
         if(!image.isNull()&&file.open(QIODevice::WriteOnly)&&image.save(&file,"PNG")&&file.commit())success=true;
         else{error="无法保存 PNG："+file.errorString();file.cancelWriting();}
     }
-    if(!success){QMessageBox::warning(this,"下载简谱失败",error);return;}
+    if(!success){logPractice(LogLevel::Error,QString("导出简谱失败：%1；%2").arg(path,error));QMessageBox::warning(this,"下载简谱失败",error);return;}
     feedback_=allPages?QString("已下载全部 %1 页简谱：%2").arg(count).arg(QFileInfo(path).fileName()):
         QString("已下载第 %1 页简谱：%2").arg(page+1).arg(QFileInfo(path).fileName());updatePrompt();
+    logPractice(LogLevel::Info,QString("简谱导出完成：%1，%2 页").arg(path).arg(allPages?count:1));
 }
 void PracticePage::openSettings(){
     pause();if(settingsDialog_){settingsDialog_->show();settingsDialog_->raise();return;}
@@ -405,6 +523,9 @@ void PracticePage::applyOptions(const PracticeOptions& options){
     QSettings saved;saved.setValue("practice/metronomeEnabled",options_.metronomeEnabled);saved.setValue("practice/followScore",options_.followScore);
     saved.setValue("practice/metronomeBpm",options_.metronomeBpm);saved.setValue("practice/beatsPerBar",options_.beatsPerBar);
     QString keyText;for(auto value:options_.inputKeys)keyText+=QChar(value);saved.setValue("practice/inputKeys",keyText);
+    logPractice(LogLevel::Info,QString("练习设置已更新：循环 %1（%2～%3 秒），节拍器 %4，跟随曲谱 %5，%6 BPM / %7 拍，键位 %8")
+        .arg(options_.loopEnabled?"开启":"关闭").arg(options_.loopStart,0,'f',2).arg(options_.loopEnd,0,'f',2)
+        .arg(options_.metronomeEnabled?"开启":"关闭",options_.followScore?"开启":"关闭").arg(options_.metronomeBpm).arg(options_.beatsPerBar).arg(keyText));
     updatePrompt();
 }
 void PracticePage::alignFollowingGroup(){
@@ -435,13 +556,13 @@ void PracticePage::startMetronome(){
             started=metronome_.play(metronomeBeats_,audio_.position(),rangeEnd(),speed,error,&audio_);
         }
     }catch(const std::exception& e){error=QString::fromUtf8(e.what());}
-    if(!started)feedback_=error+" 歌曲练习仍可继续。";
+    if(!started){feedback_=error+" 歌曲练习仍可继续。";logPractice(LogLevel::Warning,"节拍器启动失败："+error);}
 }
 void PracticePage::updateMetronomeRhythm(){
     if(!running_||!followingMode_||!options_.metronomeEnabled||!song_)return;
     try{
         auto [bpm,beats]=options_.followScore?metronomeRhythmAt(*song_,settings_,position_):std::pair{options_.metronomeBpm,options_.beatsPerBar};
         metronome_.setRhythm(bpm*speed_->currentData().toDouble(),beats);
-    }catch(const std::exception& e){metronome_.stop();feedback_=QString::fromUtf8(e.what());}
+    }catch(const std::exception& e){metronome_.stop();feedback_=QString::fromUtf8(e.what());logPractice(LogLevel::Warning,"节拍器节奏更新失败："+feedback_);}
 }
 }

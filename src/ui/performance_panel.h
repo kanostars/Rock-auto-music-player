@@ -66,6 +66,8 @@ namespace rock {
 
         void setLibraryBusy(bool);
 
+        void setDriverInspectionActive(bool);
+
         void setPreviewPlaying(bool playing) { previewPlaying_ = playing; }
 
         void previewFinished();
@@ -80,6 +82,8 @@ namespace rock {
         void previewStartRequested();
 
         void activeChanged(bool active);
+
+        void keyboardDiscoveryActiveChanged(bool active);
 
         void statusChanged(const QString &text);
 
@@ -107,6 +111,7 @@ namespace rock {
         std::shared_ptr<const Song> song_;
         std::shared_ptr<const Conversion> result_;
         Settings settings_;
+        QString songName_;
         double position_{};
         PerformanceController controller_;
         QTimer *timer_{};
@@ -114,6 +119,7 @@ namespace rock {
         double rangeStart_{}, rangeEnd_{-1};
         QWidget *playlistControls_{}, *transportControls_{};
         bool running_{}, libraryBusy_{}, switchingSong_{}, queueActive_{}, previewPlaying_{};
+        bool driverInspectionActive_{};
         PerformanceSnapshot snapshot_;
         std::vector<int> randomRemaining_, songHistory_;
         int historyCursor_{-1};

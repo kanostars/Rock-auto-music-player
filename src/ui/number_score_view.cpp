@@ -45,7 +45,33 @@ struct Glyph {
 struct VoiceLayout {int index{};QRectF bounds;std::vector<Glyph> glyphs;};
 struct Cell {int measure{};double first{},last{};QRectF bounds;std::vector<VoiceLayout> voices;};
 struct Page {std::vector<Cell> cells;};
-struct MeasureFocus {int page{};double seconds{};QRectF bounds;};
+struct MeasureFocus {int page{};double seconds{},firstTick{};QRectF bounds;};
+struct PracticeAnchor {int measure{-1};double tick{};};
+
+std::vector<PracticeAnchor> practiceAnchors(const NumberScore& score,const std::vector<PracticeGroup>& groups){
+    std::vector<PracticeAnchor> anchors(groups.size());
+    for(int measure=0;measure<static_cast<int>(score.measures.size());++measure)
+        for(const auto& voice:score.measures[measure].voices)for(const auto& event:voice){
+            if(!event.keys||event.tieIn||event.extension)continue;
+            // Source time identifies the MIDI strike; printed ticks identify
+            // its position after sixteenth-note quantization. Cache once so
+            // pressing each practice group does not scan the whole score.
+            auto group=std::lower_bound(groups.begin(),groups.end(),event.sourceSeconds,
+                [](const PracticeGroup& value,double time){return value.start<time;});
+            auto closest=groups.end();double distance=1e-7;
+            const auto consider=[&](auto candidate){
+                if(candidate==groups.end()||!(candidate->keys&event.keys))return;
+                const double difference=std::abs(candidate->start-event.sourceSeconds);
+                if(difference<distance){closest=candidate;distance=difference;}
+            };
+            consider(group);if(group!=groups.begin())consider(std::prev(group));
+            if(closest==groups.end())continue;
+            auto& anchor=anchors[static_cast<std::size_t>(closest-groups.begin())];
+            if(anchor.measure<0||measure<anchor.measure||(measure==anchor.measure&&event.startTick<anchor.tick))
+                anchor={measure,event.startTick};
+        }
+    return anchors;
+}
 
 std::vector<int> activeVoices(const NumberScoreMeasure& measure,double first,double last){
     std::vector<int> voices;
@@ -128,32 +154,53 @@ void arc(QPainter& painter,double x1,double x2,double y){
     QPainterPath path;path.moveTo(x1,y);path.quadTo((x1+x2)/2,y-17,x2,y);
     painter.drawPath(path);
 }
-void drawGlyph(QPainter& painter,const Glyph& glyph){
-    painter.setFont(scoreFont(38,true));painter.setPen(ink);
-    std::vector<std::pair<int,int>> pitches;
-    if(!glyph.keys)pitches.push_back({0,0});
-    else for(int target=8;target>=0;--target)if(glyph.keys&(1u<<target))pitches.push_back(numberDegree(target));
+void drawGlyph(QPainter& painter,const Glyph& glyph,const QColor& glyphInk=ink,
+               std::uint16_t matchedKeys=0,const QColor& matchedInk=ink){
+    painter.setFont(scoreFont(38,true));
+    struct Pitch {int degree{},octave{};std::uint16_t key{};};
+    std::vector<Pitch> pitches;
+    if(!glyph.keys)pitches.push_back({0,0,0});
+    else for(int target=8;target>=0;--target)if(glyph.keys&(1u<<target)){
+        const auto [degree,octave]=numberDegree(target);
+        pitches.push_back({degree,octave,static_cast<std::uint16_t>(1u<<target)});
+    }
     double baseline=glyph.baseline;
-    for(const auto& [degree,octave]:pitches){
+    for(const auto& [degree,octave,key]:pitches){
+        const QColor& color=key&&(matchedKeys&key)?matchedInk:glyphInk;
+        painter.setPen(color);
         const QString text=glyph.extension?QString::fromUtf8("—"):QString::number(degree);
         const double textWidth=QFontMetricsF(painter.font()).horizontalAdvance(text);
         painter.drawText(QPointF(glyph.x-textWidth/2,baseline),text);
         if(!glyph.extension&&degree){
-            painter.setBrush(ink);painter.setPen(Qt::NoPen);
+            painter.setBrush(color);painter.setPen(Qt::NoPen);
             for(int dot=0;dot<std::abs(octave);++dot){
                 const double dotY=octave>0?baseline-40-dot*8:baseline+12+dot*8;
                 painter.drawEllipse(QPointF(glyph.x,dotY),2.7,2.7);
             }
-            painter.setPen(ink);
+            painter.setPen(color);
         }
         if(!glyph.extension&&(glyph.units==3||glyph.units==6)){
-            painter.setBrush(ink);painter.setPen(Qt::NoPen);painter.drawEllipse(QPointF(glyph.x+23,baseline-12),2.8,2.8);painter.setPen(ink);
+            painter.setBrush(color);painter.setPen(Qt::NoPen);painter.drawEllipse(QPointF(glyph.x+23,baseline-12),2.8,2.8);painter.setPen(color);
         }
         baseline+=pitchStep;
     }
     const int underlines=glyph.extension?0:(glyph.units==1?2:(glyph.units==2||glyph.units==3?1:0));
-    painter.setPen(QPen(ink,2));
+    painter.setPen(QPen(glyph.keys&&(matchedKeys&glyph.keys)==glyph.keys?matchedInk:glyphInk,2));
     for(int line=0;line<underlines;++line)painter.drawLine(QPointF(glyph.x-13,baseline-pitchStep+23+line*6),QPointF(glyph.x+13,baseline-pitchStep+23+line*6));
+}
+void drawTies(QPainter& painter,const VoiceLayout& voice,const QColor& color=rule){
+    painter.setPen(QPen(color,1.7));
+    for(std::size_t i=0;i<voice.glyphs.size();++i){
+        const auto& glyph=voice.glyphs[i];
+        const double y=glyph.bounds.top()-5;
+        if(glyph.keys&&glyph.tieIn&&(i==0||!voice.glyphs[i-1].tieOut||voice.glyphs[i-1].keys!=glyph.keys))
+            arc(painter,std::max(voice.bounds.left()+1,glyph.x-30),glyph.x-4,y);
+        if(glyph.keys&&glyph.tieOut){
+            if(i+1<voice.glyphs.size()&&voice.glyphs[i+1].tieIn&&voice.glyphs[i+1].keys==glyph.keys)
+                arc(painter,glyph.x+4,voice.glyphs[i+1].x-4,std::min(y,voice.glyphs[i+1].bounds.top()-5));
+            else arc(painter,glyph.x+4,std::min(voice.bounds.right()-1,glyph.x+34),y);
+        }
+    }
 }
 void drawCell(QPainter& painter,const Cell& cell,const NumberScore& score){
     const auto& measure=score.measures[cell.measure];
@@ -172,18 +219,7 @@ void drawCell(QPainter& painter,const Cell& cell,const NumberScore& score){
             painter.drawText(QRectF(voice.bounds.left()+3,voice.bounds.top()+15,28,22),Qt::AlignLeft,QString::number(voice.index+1));
         }
         for(const auto& glyph:voice.glyphs)drawGlyph(painter,glyph);
-        painter.setPen(QPen(rule,1.7));
-        for(std::size_t i=0;i<voice.glyphs.size();++i){
-            const auto& glyph=voice.glyphs[i];
-            const double y=glyph.bounds.top()-5;
-            if(glyph.keys&&glyph.tieIn&&(i==0||!voice.glyphs[i-1].tieOut||voice.glyphs[i-1].keys!=glyph.keys))
-                arc(painter,std::max(voice.bounds.left()+1,glyph.x-30),glyph.x-4,y);
-            if(glyph.keys&&glyph.tieOut){
-                if(i+1<voice.glyphs.size()&&voice.glyphs[i+1].tieIn&&voice.glyphs[i+1].keys==glyph.keys)
-                    arc(painter,glyph.x+4,voice.glyphs[i+1].x-4,std::min(y,voice.glyphs[i+1].bounds.top()-5));
-                else arc(painter,glyph.x+4,std::min(voice.bounds.right()-1,glyph.x+34),y);
-            }
-        }
+        drawTies(painter,voice);
     }
 }
 void drawPage(QPainter& painter,const Page& page,const NumberScore& score,const QString& name,int pageIndex,int total){
@@ -211,11 +247,13 @@ struct NumberScoreView::Layout {
     NumberScore score;
     std::vector<Page> pages;
     std::vector<PracticeGroup> groups;
+    std::vector<PracticeAnchor> anchors;
     std::vector<std::vector<MeasureFocus>> measureFocus;
     std::shared_ptr<const Song> song;
     Settings settings;
     int page{},cachedPage{-1};
     int focusedMeasure{-1},focusedFragment{-1};
+    int practiceGroup{-1};
     bool following{};
     double position{},tick{};
     std::size_t group{std::numeric_limits<std::size_t>::max()};
@@ -228,11 +266,20 @@ struct NumberScoreView::Layout {
     }
     bool highlighted(const Glyph& glyph) const{
         if(group>=groups.size()||!glyph.keys||std::abs(glyph.sourceSeconds-groups[group].start)>=1e-7||!(glyph.keys&groups[group].keys))return false;
+        if(practiceGroup>=0)return !glyph.tieIn&&!glyph.extension;
         return (tick>=glyph.startTick-1e-6&&tick<glyph.endTick-1e-6)||
             (!glyph.tieIn&&!glyph.extension&&std::abs(position-groups[group].start)<1e-7);
     }
     std::pair<int,int> focusAt(double seconds) const{
         if(score.measures.empty())return {-1,-1};
+        if(practiceGroup>=0&&anchors[practiceGroup].measure>=0){
+            const auto& anchor=anchors[practiceGroup];
+            const auto& fragments=measureFocus[anchor.measure];
+            if(fragments.empty())return {-1,-1};
+            const auto fragment=std::upper_bound(fragments.begin(),fragments.end(),anchor.tick,
+                [](double tick,const MeasureFocus& value){return tick<value.firstTick;});
+            return {anchor.measure,fragment==fragments.begin()?0:static_cast<int>(fragment-fragments.begin()-1)};
+        }
         // Use source seconds rather than rounded ticks or quantized onsets:
         // neither may switch the page before the actual measure boundary.
         auto measure=std::upper_bound(score.measures.begin(),score.measures.end(),seconds,
@@ -261,6 +308,7 @@ void NumberScoreView::setSong(const QString& name,std::shared_ptr<const Song> so
     auto next=std::make_unique<Layout>();next->name=name.simplified();next->song=std::move(song);next->settings=settings;
     if(next->song&&result){
         next->score=makeNumberScore(*next->song,*result,settings);next->groups=makePracticeGroups(*result);
+        next->anchors=practiceAnchors(next->score,next->groups);
         std::vector<Slice> slices;
         for(int i=0;i<static_cast<int>(next->score.measures.size());++i){const auto& measure=next->score.measures[i];addSlices(slices,next->score,i,measure.startTick,measure.endTick,next->song->ppq);}
         double y=contentTop;
@@ -288,7 +336,7 @@ void NumberScoreView::setSong(const QString& name,std::shared_ptr<const Song> so
                 // A tall measure may split its voices across pages. Keep its
                 // first cell as the anchor instead of chasing each voice.
                 if(fragments.empty()||seconds>fragments.back().seconds+1e-7)
-                    fragments.push_back({p,seconds,cell.bounds});
+                    fragments.push_back({p,seconds,cell.first,cell.bounds});
             }
     }
     layout_=std::move(next);verticalScrollBar()->setValue(0);updateScrollRange();viewport()->update();emit pageChanged(currentPage(),pageCount());
@@ -298,13 +346,15 @@ void NumberScoreView::setPage(int index){
     index=std::clamp(index,0,pageCount()-1);if(index==layout_->page)return;
     layout_->page=index;layout_->cachedPage=-1;layout_->cachedImage={};verticalScrollBar()->setValue(0);updateScrollRange();viewport()->update();emit pageChanged(index,pageCount());
 }
-void NumberScoreView::setPosition(double seconds,bool follow,bool forceFocus){
+void NumberScoreView::setPosition(double seconds,bool follow,bool forceFocus,int practiceGroup){
     if(!std::isfinite(seconds))return;
-    const auto oldGroup=layout_->group;const double oldTick=layout_->tick;
+    const auto oldGroup=layout_->group;const double oldTick=layout_->tick;const int oldPracticeGroup=layout_->practiceGroup;
+    layout_->practiceGroup=practiceGroup>=0&&static_cast<std::size_t>(practiceGroup)<layout_->groups.size()?practiceGroup:-1;
     layout_->position=std::max(0.0,seconds);layout_->tick=layout_->song?tickAtSeconds(*layout_->song,layout_->settings,layout_->position):0;
     layout_->group=std::numeric_limits<std::size_t>::max();
     auto it=std::upper_bound(layout_->groups.begin(),layout_->groups.end(),seconds+1e-7,[](double time,const PracticeGroup& group){return time<group.start;});
     if(it!=layout_->groups.begin()){--it;if(seconds<it->end+1e-7)layout_->group=static_cast<std::size_t>(it-layout_->groups.begin());}
+    if(layout_->practiceGroup>=0)layout_->group=static_cast<std::size_t>(layout_->practiceGroup);
     if(follow&&!layout_->pages.empty()){
         const auto [measure,fragment]=layout_->focusAt(layout_->position);
         if(measure>=0){
@@ -318,7 +368,7 @@ void NumberScoreView::setPosition(double seconds,bool follow,bool forceFocus){
         }
     }
     layout_->following=follow;
-    if(oldGroup!=layout_->group||oldTick!=layout_->tick)viewport()->update();
+    if(oldGroup!=layout_->group||oldTick!=layout_->tick||oldPracticeGroup!=layout_->practiceGroup)viewport()->update();
 }
 QImage NumberScoreView::renderPage(int index) const{
     if(index<0||index>=pageCount())return {};
@@ -339,7 +389,7 @@ void NumberScoreView::updateScrollRange(){
 }
 void NumberScoreView::resizeEvent(QResizeEvent* event){
     QAbstractScrollArea::resizeEvent(event);updateScrollRange();
-    if(layout_->following)setPosition(layout_->position,true,true);
+    if(layout_->following)setPosition(layout_->position,true,true,layout_->practiceGroup);
 }
 void NumberScoreView::paintEvent(QPaintEvent*){
     QPainter painter(viewport());painter.fillRect(viewport()->rect(),Theme::color("#f5f7f8"));
@@ -367,5 +417,146 @@ void NumberScoreView::mouseMoveEvent(QMouseEvent* event){
         QToolTip::showText(event->globalPosition().toPoint(),"点击定位到 "+time,viewport());
     }else{viewport()->setCursor(Qt::ArrowCursor);QToolTip::hideText();}
     QAbstractScrollArea::mouseMoveEvent(event);
+}
+
+struct NumberMeasureView::Layout {
+    NumberScore score;
+    std::vector<PracticeGroup> groups;
+    std::vector<PracticeAnchor> anchors;
+    std::shared_ptr<const Song> song;
+    Settings settings;
+    Cell cell;
+    QSizeF logicalSize{400,128};
+    int measure{-1};
+    int practiceGroup{-1};
+    double position{},tick{};
+    std::size_t group{std::numeric_limits<std::size_t>::max()};
+    std::uint16_t expected{},matched{};
+
+    int measureAt(double seconds) const{
+        if(score.measures.empty())return -1;
+        const auto it=std::upper_bound(score.measures.begin(),score.measures.end(),seconds,
+            [](double time,const NumberScoreMeasure& value){return time<value.startSeconds;});
+        return it==score.measures.begin()?0:static_cast<int>(it-score.measures.begin()-1);
+    }
+    void setMeasure(int index){
+        if(index<0){measure=-1;cell={};logicalSize={400,128};return;}
+        const auto& value=score.measures[index];
+        const double width=std::max(384.0,idealWidth(value,value.startTick,value.endTick));
+        Slice slice{index,value.startTick,value.endTick,68,width,{}};
+        for(int v:activeVoices(value,value.startTick,value.endTick)){
+            int chord=1;
+            for(const auto& event:value.voices[v])chord=std::max(chord,chordSize(event.keys));
+            const double height=chord*pitchStep+38;
+            slice.voices.push_back({v,chord,height});slice.height+=height;
+        }
+        slice.height+=12;
+        // The printed score has a separate tempo line. A mini measure keeps
+        // both labels on one line, without changing the notation's spacing.
+        constexpr double headerReduction=26;
+        auto next=placeCell(slice,score,QRectF(8,8,width,slice.height),song->ppq);
+        next.bounds.setHeight(next.bounds.height()-headerReduction);
+        for(auto& voice:next.voices){
+            voice.bounds.translate(0,-headerReduction);
+            for(auto& glyph:voice.glyphs){glyph.bounds.translate(0,-headerReduction);glyph.baseline-=headerReduction;}
+        }
+        logicalSize={width+16,slice.height-headerReduction+16};
+        cell=std::move(next);measure=index;
+    }
+    bool highlighted(const Glyph& glyph) const{
+        if(group>=groups.size()||!glyph.keys||std::abs(glyph.sourceSeconds-groups[group].start)>=1e-7)return false;
+        const auto keys=expected?expected:groups[group].keys;
+        if(!(glyph.keys&keys))return false;
+        if(practiceGroup>=0)return !glyph.tieIn&&!glyph.extension;
+        return (tick>=glyph.startTick-1e-6&&tick<glyph.endTick-1e-6)||
+            (!glyph.tieIn&&!glyph.extension&&std::abs(position-groups[group].start)<1e-7);
+    }
+};
+
+NumberMeasureView::NumberMeasureView(QWidget* parent):QWidget(parent),layout_(std::make_unique<Layout>()){
+    setObjectName("practiceNumberMeasure");setAccessibleName("当前小节数字简谱");
+    setAutoFillBackground(false);setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
+}
+NumberMeasureView::~NumberMeasureView()=default;
+void NumberMeasureView::setSong(std::shared_ptr<const Song> song,std::shared_ptr<const Conversion> result,
+                                const Settings& settings){
+    auto next=std::make_unique<Layout>();next->song=std::move(song);next->settings=settings;
+    if(next->song&&result){
+        next->score=makeNumberScore(*next->song,*result,settings);
+        next->groups=makePracticeGroups(*result);
+        next->anchors=practiceAnchors(next->score,next->groups);
+        next->setMeasure(next->measureAt(0));
+    }
+    layout_=std::move(next);updateGeometry();update();emit preferredSizeChanged();
+}
+void NumberMeasureView::setPosition(double seconds,std::uint16_t expected,std::uint16_t matched,int practiceGroup){
+    if(!std::isfinite(seconds))return;
+    seconds=std::max(0.0,seconds);expected&=0x1ff;matched&=0x1ff;
+    practiceGroup=practiceGroup>=0&&static_cast<std::size_t>(practiceGroup)<layout_->groups.size()?practiceGroup:-1;
+    const bool changed=layout_->position!=seconds||layout_->expected!=expected||layout_->matched!=matched||layout_->practiceGroup!=practiceGroup;
+    layout_->practiceGroup=practiceGroup;
+    layout_->position=seconds;layout_->expected=expected;layout_->matched=matched;
+    layout_->tick=layout_->song?tickAtSeconds(*layout_->song,layout_->settings,seconds):0;
+    layout_->group=std::numeric_limits<std::size_t>::max();
+    auto it=std::upper_bound(layout_->groups.begin(),layout_->groups.end(),seconds+1e-7,
+        [](double time,const PracticeGroup& group){return time<group.start;});
+    if(it!=layout_->groups.begin()){
+        --it;if(seconds<it->end+1e-7)layout_->group=static_cast<std::size_t>(it-layout_->groups.begin());
+    }
+    if(practiceGroup>=0)layout_->group=static_cast<std::size_t>(practiceGroup);
+    const int measure=practiceGroup>=0&&layout_->anchors[practiceGroup].measure>=0?
+        layout_->anchors[practiceGroup].measure:layout_->measureAt(seconds);
+    if(measure!=layout_->measure){
+        layout_->setMeasure(measure);updateGeometry();emit preferredSizeChanged();update();
+    }else if(changed)update();
+}
+QSize NumberMeasureView::sizeHint() const{
+    constexpr double preferredScale=.7;
+    return {qCeil(layout_->logicalSize.width()*preferredScale),qCeil(layout_->logicalSize.height()*preferredScale)};
+}
+void NumberMeasureView::paintEvent(QPaintEvent*){
+    QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::TextAntialiasing);
+    if(layout_->measure<0){
+        painter.setFont(scoreFont(13));painter.setPen(Theme::color("#8397a3"));
+        painter.drawText(contentsRect().adjusted(8,8,-8,-8),Qt::AlignCenter|Qt::TextWordWrap,"暂无可显示的数字简谱");return;
+    }
+    const auto available=QRectF(contentsRect());
+    if(available.isEmpty())return;
+    const double scale=std::min(available.width()/layout_->logicalSize.width(),available.height()/layout_->logicalSize.height());
+    painter.translate(available.center()-QPointF(layout_->logicalSize.width()*scale/2,layout_->logicalSize.height()*scale/2));
+    painter.scale(scale,scale);
+    const auto text=Theme::color("#203d4e"),secondary=Theme::color("#8397a3"),bar=Theme::color("#c4d3da");
+    const auto active=Theme::color("#178e80"),complete=Theme::color("#0e796c");
+    const auto& cell=layout_->cell;const auto& measure=layout_->score.measures[cell.measure];
+    const QString title=QString("第 %1 小节 · %2/%3").arg(measure.number).arg(measure.numerator).arg(measure.denominator);
+    const QString tempo=QString::fromUtf8("♩ = %1").arg(measure.bpm,0,'f',std::abs(measure.bpm-std::round(measure.bpm))<.05?0:1);
+    const double titleWidth=QFontMetricsF(scoreFont(22)).horizontalAdvance(title);
+    const double tempoWidth=QFontMetricsF(scoreFont(19)).horizontalAdvance(tempo);
+    const double headerWidth=cell.bounds.width()-16;
+    const double headerScale=std::min(1.0,(headerWidth-18)/(titleWidth+tempoWidth));
+    painter.save();painter.translate(cell.bounds.left()+8,cell.bounds.top()+24);painter.scale(headerScale,headerScale);
+    painter.setFont(scoreFont(22));painter.setPen(secondary);painter.drawText(QPointF(0,0),title);
+    painter.setFont(scoreFont(19));painter.drawText(QPointF(headerWidth/headerScale-tempoWidth,0),tempo);painter.restore();
+    for(const auto& voice:cell.voices){
+        painter.setPen(QPen(bar,1.7));
+        painter.drawLine(QPointF(voice.bounds.left(),voice.bounds.top()+10),QPointF(voice.bounds.left(),voice.bounds.bottom()-10));
+        painter.drawLine(QPointF(voice.bounds.right(),voice.bounds.top()+10),QPointF(voice.bounds.right(),voice.bounds.bottom()-10));
+        if(layout_->score.voiceCount>1){
+            painter.setFont(scoreFont(16));painter.setPen(secondary);
+            painter.drawText(QRectF(voice.bounds.left()+3,voice.bounds.top()+15,28,22),Qt::AlignLeft,QString::number(voice.index+1));
+        }
+        for(const auto& glyph:voice.glyphs){
+            const bool highlighted=layout_->highlighted(glyph);
+            const std::uint16_t matched=highlighted?static_cast<std::uint16_t>(layout_->matched&glyph.keys):std::uint16_t{};
+            if(highlighted){
+                const bool finished=(matched&glyph.keys)==glyph.keys;
+                painter.setBrush(Theme::color(finished?"#d9eeea":"#e8f4f1"));
+                painter.setPen(QPen(finished?complete:active,1.8));
+                painter.drawRoundedRect(glyph.bounds.adjusted(-5,-2,5,2),7,7);
+            }
+            drawGlyph(painter,glyph,highlighted?active:text,matched,complete);
+        }
+        drawTies(painter,voice,secondary);
+    }
 }
 }

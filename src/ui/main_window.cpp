@@ -10,9 +10,11 @@
 #include "practice_page.h"
 #include "time_seek_edit.h"
 #include "project_export_dialog.h"
+#include "log_dialog.h"
 #include "theme.h"
 #include "app/preferences.h"
 #include "app/export_paths.h"
+#include "app/app_log.h"
 #include "platform/global_shortcut.h"
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -101,17 +103,21 @@ MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
         if(closeAfterImport_){
             QTimer::singleShot(0,this,[this]{closeAfterImport_=false;close();});return;
         }
-        if(cancel_->load()) {status_->setText("导入已取消，已有曲目保留。");return;}
+        if(cancel_->load()) {AppLog::instance().write(LogLevel::Info,"MIDI 导入","导入已取消，已有曲目保留。");status_->setText("导入已取消，已有曲目保留。");return;}
         QStringList errors;int last=-1;const int firstImported=static_cast<int>(sessions_.size());
         for(auto& item:loaded) {
-            if(!item.error.isEmpty()) {errors<<QFileInfo(item.session.path).fileName()+"："+item.error;continue;}
+            if(!item.error.isEmpty()) {AppLog::instance().write(LogLevel::Error,"MIDI 导入",item.session.path+"："+item.error);errors<<QFileInfo(item.session.path).fileName()+"："+item.error;continue;}
             sessions_.push_back(std::move(item.session));
             const auto& session=sessions_.back();
+            AppLog::instance().write(LogLevel::Info,"MIDI 导入",QString("读取成功：%1 · %2 个音符 · %3 个音轨 · %4 处冲突").arg(session.path).arg(session.song->notes.size()).arg(session.song->tracks.size()).arg(session.result->conflicts));
+            for(size_t i=0;i<std::min<size_t>(20,session.song->warnings.size());++i)AppLog::instance().write(LogLevel::Warning,"MIDI 解析",QString("%1：%2").arg(QFileInfo(session.path).fileName(),QString::fromUtf8(session.song->warnings[i])));
+            if(session.song->warnings.size()>20)AppLog::instance().write(LogLevel::Warning,"MIDI 解析",QString("其余 %1 条解析提示请查看转换报告。").arg(session.song->warnings.size()-20));
             auto* row=new QListWidgetItem(QFileInfo(session.path).completeBaseName()+"\n"+QString("%1 音符 · %2 个音轨").arg(session.song->notes.size()).arg(session.song->tracks.size()));
             row->setToolTip(session.path);row->setSizeHint(QSize(180,66));library_->addItem(row);last=library_->count()-1;
             row->setData(Qt::UserRole,session.result->duration);
         }
         if(last>=0) library_->setCurrentRow(last);
+        AppLog::instance().write(LogLevel::Info,"MIDI 导入",QString("导入完成：新增 %1 首，失败 %2 首，曲目库共 %3 首。").arg(static_cast<int>(sessions_.size())-firstImported).arg(errors.size()).arg(sessions_.size()));
         if(!errors.isEmpty()) {status_->setText("导入失败："+errors.join("；"));status_->setToolTip(errors.join('\n'));}
         promptImportConflicts(firstImported);
     });
@@ -121,7 +127,7 @@ MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
         position_=std::min(selectedRange().second,audio_.position());
         roll_->setPlayhead(position_,true);refreshClock();
         if(audio_.finished()){pausePreview();performance_->previewFinished();}
-        else if(!audio_.running()){pausePreview();status_->setText("音频输出已中断，请检查系统默认输出设备后重新试听。");}
+        else if(!audio_.running()){AppLog::instance().write(LogLevel::Error,"试听","音频输出已中断。");pausePreview();status_->setText("音频输出已中断，请检查系统默认输出设备后重新试听。");}
     });
     qApp->installEventFilter(this);
 }
@@ -148,6 +154,11 @@ void MainWindow::buildUi() {
     connect(exportProjectAction,&QAction::triggered,this,&MainWindow::exportWorkbenchProject);
     connect(importProjectAction,&QAction::triggered,this,&MainWindow::importWorkbenchProject);
     import_=button("＋  导入 MIDI","importButton");import_->setMinimumWidth(154);top->addWidget(import_);outer->addWidget(header);
+    logsButton_=button("日志","openLogsButton");logsButton_->setToolTip("查看全局运行日志、搜索和导出");top->addWidget(logsButton_);logsButton_->hide();
+    connect(logsButton_,&QPushButton::clicked,this,[this]{
+        if(!logWindow_){logWindow_=new LogDialog(this);logWindow_->setAttribute(Qt::WA_DeleteOnClose);}
+        logWindow_->show();logWindow_->raise();logWindow_->activateWindow();
+    });
     settingsNavigation_=button("设置","settingsNavigation");settingsNavigation_->setCheckable(true);top->addWidget(settingsNavigation_);
     practiceBack_=button("返回工作台","practiceBackButton");top->addWidget(practiceBack_);practiceBack_->hide();
     connect(practiceBack_,&QPushButton::clicked,this,&MainWindow::leavePractice);
@@ -327,11 +338,22 @@ void MainWindow::buildUi() {
     connect(stop_,&QPushButton::clicked,this,[this]{performance_->stopPerformance();pausePreview(true);});
     statusPanel_=new QWidget;auto* statusLine=new QHBoxLayout(statusPanel_);statusLine->setContentsMargins(0,0,0,0);status_=label("就绪 · 支持 SMF 0 / 1 · 本地导入，无需驱动","muted");status_->setObjectName("statusText");status_->setWordWrap(true);statusLine->addWidget(status_,1);
     progress_=new QProgressBar;progress_->setRange(0,0);progress_->setMaximumWidth(120);progress_->setMaximumHeight(5);progress_->hide();statusLine->addWidget(progress_);
-    cancelButton_=button("取消导入");cancelButton_->hide();statusLine->addWidget(cancelButton_);connect(cancelButton_,&QPushButton::clicked,this,[this]{if(cancel_)cancel_->store(true);});
+    cancelButton_=button("取消导入");cancelButton_->hide();statusLine->addWidget(cancelButton_);connect(cancelButton_,&QPushButton::clicked,this,[this]{if(cancel_){AppLog::instance().write(LogLevel::Info,"MIDI 导入","请求取消导入。");cancel_->store(true);}});
     statusLine->addWidget(summary_);outer->addWidget(statusPanel_);
     appSettings_=new SettingsPage;outer->insertWidget(2,appSettings_,1);appSettings_->hide();
     connect(performance_,&PerformancePanel::activeChanged,appSettings_,&SettingsPage::setPerformanceActive);
+    connect(performance_,&PerformancePanel::keyboardDiscoveryActiveChanged,appSettings_,&SettingsPage::setKeyboardDiscoveryActive);
+    connect(appSettings_,&SettingsPage::driverInspectionActiveChanged,performance_,&PerformancePanel::setDriverInspectionActive);
     practicePage_=new PracticePage;outer->insertWidget(2,practicePage_,1);practicePage_->hide();
+    connect(practicePage_,&PracticePage::miniModeChanged,this,[this](bool enabled){
+        if(enabled){
+            clock_->cancelEditing();miniRefresh_.stop();if(mini_)mini_->hide();hide();
+        }else if(!closing_&&!isVisible()){
+            show();raise();activateWindow();
+        }
+        updateGlobalShortcuts();
+    });
+    connect(practicePage_,&PracticePage::miniRestoreRequested,this,&MainWindow::restoreMainWindow);
 
     connect(performance_,&PerformancePanel::songChangeRequested,this,[this](int row){if(!busy_)library_->setCurrentRow(row);});
     connect(performance_,&PerformancePanel::previewStartRequested,this,[this]{pausePreview(true);startPreview();});
@@ -359,10 +381,10 @@ void MainWindow::buildUi() {
 
 void MainWindow::showAppSettings(bool show){
     if(show)clock_->cancelEditing();
-    if(practicePage_&&practicePage_->isVisible())leavePractice();
+    if(practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode()))leavePractice();
     if(show&&trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
     workspace_->setVisible(!show);appSettings_->setVisible(show);transportPanel_->setVisible(!show);statusPanel_->setVisible(!show);import_->setVisible(!show);
-    projectMenu_->setVisible(!show);settingsNavigation_->setText(show?"返回工作台":"设置");
+    projectMenu_->setVisible(!show);logsButton_->setVisible(show);settingsNavigation_->setText(show?"返回工作台":"设置");
     if(show)setPageHeader("设置","外观即时生效；快捷键保存后生效，重启程序后会保留。");else setPageHeader();
     setMinimumWidth(std::max(1120,centralWidget()->minimumSizeHint().width()));
 }
@@ -383,13 +405,14 @@ void MainWindow::openPractice(){
     practicePage_->setSong(QFileInfo(session.path).completeBaseName(),std::make_shared<Song>(*session.song),
                            std::make_shared<Conversion>(*session.result),session.settings);
     practicePage_->setVolume(volume_->value());
-    workspace_->hide();appSettings_->hide();transportPanel_->hide();statusPanel_->hide();import_->hide();projectMenu_->hide();settingsNavigation_->hide();
+    workspace_->hide();appSettings_->hide();logsButton_->hide();transportPanel_->hide();statusPanel_->hide();import_->hide();projectMenu_->hide();settingsNavigation_->hide();
     setPageHeader(practicePage_->pageTitle(),practicePage_->pageSubtitle());practiceBack_->show();
     practicePage_->show();practicePage_->setFocus();updateGlobalShortcuts();
     setMinimumWidth(std::max(1120,centralWidget()->minimumSizeHint().width()));
 }
 void MainWindow::leavePractice(){
-    if(!practicePage_||!practicePage_->isVisible())return;
+    if(!practicePage_||(!practicePage_->isVisible()&&!practicePage_->miniMode()))return;
+    AppLog::instance().write(LogLevel::Info,"跟练","离开歌曲练习，返回工作台。");
     practicePage_->stop();const auto [first,last]=selectedRange();position_=std::clamp(practicePage_->position(),first,last);
     practicePage_->hide();workspace_->show();transportPanel_->show();statusPanel_->show();import_->show();projectMenu_->show();settingsNavigation_->show();
     practiceBack_->hide();setPageHeader();
@@ -414,20 +437,22 @@ void MainWindow::updateShortcuts(){
     if(current_>=0)showNote(roll_->selectedSource());
 }
 void MainWindow::updateGlobalShortcuts(){
-    bool inhibited=closing_||QApplication::activeModalWidget()||(practicePage_&&practicePage_->isVisible());
+    bool inhibited=closing_||QApplication::activeModalWidget()||QApplication::activePopupWidget();
+    const bool practicing=practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode());
     for(auto* focus=QApplication::focusWidget();focus;focus=focus->parentWidget())if(qobject_cast<QKeySequenceEdit*>(focus)||qobject_cast<TimeSeekEdit*>(focus)){inhibited=true;break;}
     constexpr ShortcutAction actions[]{ShortcutAction::PerformancePrevious,ShortcutAction::PerformanceNext,ShortcutAction::MiniMode};
     auto& preferences=Preferences::instance();
     // Release all changed combinations first so users can swap two bindings.
-    for(size_t i=0;i<globalShortcuts_.size();++i)if(inhibited||globalShortcuts_[i]->key()!=preferences.shortcut(actions[i]))globalShortcuts_[i]->disable();
+    for(size_t i=0;i<globalShortcuts_.size();++i)if(inhibited||(practicing&&i<2)||globalShortcuts_[i]->key()!=preferences.shortcut(actions[i]))globalShortcuts_[i]->disable();
     if(inhibited)return;
     for(size_t i=0;i<globalShortcuts_.size();++i){
+        if(practicing&&i<2)continue;
         QString error;if(!globalShortcuts_[i]->enable(preferences.shortcut(actions[i]),error))status_->setText(error);
     }
 }
 void MainWindow::toggleMiniPlayer(){
-    if(busy_||roll_->isEditing()||QApplication::activeModalWidget())return;
-    if(mini_&&mini_->isVisible())restoreMainWindow();else openMiniPlayer();
+    if(busy_||roll_->isEditing()||QApplication::activeModalWidget()||QApplication::activePopupWidget())return;
+    if((practicePage_&&practicePage_->miniMode())||(mini_&&mini_->isVisible()))restoreMainWindow();else openMiniPlayer();
 }
 void MainWindow::togglePerformance(){
     if(busy_)return;
@@ -445,7 +470,11 @@ void MainWindow::togglePerformance(){
     syncMiniPlayer();
 }
 void MainWindow::openMiniPlayer(){
-    if(busy_||roll_->isEditing()||QApplication::activeModalWidget()||(practicePage_&&practicePage_->isVisible()))return;
+    if(busy_||roll_->isEditing()||QApplication::activeModalWidget()||QApplication::activePopupWidget())return;
+    if(practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode())){
+        if(!practicePage_->miniMode())practicePage_->enterMiniMode(screen());
+        return;
+    }
     clock_->cancelEditing();
     if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
     if(!mini_){
@@ -497,7 +526,9 @@ void MainWindow::openMiniPlayer(){
     mini_->present(screen());syncMiniPlayer();miniRefresh_.start();hide();
 }
 void MainWindow::restoreMainWindow(){
+    if(practicePage_&&practicePage_->miniMode())practicePage_->leaveMiniMode();
     miniRefresh_.stop();show();raise();activateWindow();if(mini_)mini_->hide();
+    if(practicePage_&&practicePage_->isVisible())practicePage_->setFocus();
 }
 void MainWindow::syncMiniPlayer(){
     if(!mini_||!mini_->isVisible())return;
@@ -527,7 +558,7 @@ void MainWindow::quitFromMiniPlayer(){
     // All exit paths use closeEvent; quit() would bypass a cancelled save prompt.
     // QWidget::close records visibility before closeEvent, so restore first
     // to let lastWindowClosed end the application after an accepted close.
-    if(mini_&&mini_->isVisible())restoreMainWindow();
+    if((practicePage_&&practicePage_->miniMode())||(mini_&&mini_->isVisible()))restoreMainWindow();
     close();
 }
 
@@ -623,7 +654,7 @@ bool MainWindow::eventFilter(QObject* watched,QEvent* event) {
             }
         }
     }
-    if(practicePage_&&practicePage_->isVisible())return QMainWindow::eventFilter(watched,event);
+    if(practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode()))return QMainWindow::eventFilter(watched,event);
     if(!closing_&&(event->type()==QEvent::ShortcutOverride||event->type()==QEvent::KeyPress||event->type()==QEvent::KeyRelease)){
         auto* widget=qobject_cast<QWidget*>(watched);auto* key=static_cast<QKeyEvent*>(event);
         const auto* window=widget?widget->window():nullptr;
@@ -651,12 +682,13 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if(closing_){QMainWindow::closeEvent(event);return;}
     if(closePromptOpen_){event->ignore();return;}
     if(busy_){
+        AppLog::instance().write(LogLevel::Info,"应用","请求退出，先取消正在进行的 MIDI 导入。");
         closeAfterImport_=true;if(cancel_)cancel_->store(true);
         status_->setText("正在取消 MIDI 导入，完成后确认是否保存当前工程…");event->ignore();return;
     }
     const QScopedValueRollback<bool> promptGuard(closePromptOpen_,true);
     clock_->cancelEditing();
-    if(mini_&&mini_->isVisible())restoreMainWindow();
+    if((practicePage_&&practicePage_->miniMode())||(mini_&&mini_->isVisible()))restoreMainWindow();
     if(practicePage_)practicePage_->stop();
     performance_->stopPerformance();pausePreview();
     roll_->setEditingEnabled(false); // Cancel an unfinished drag before capturing committed edits.
@@ -666,11 +698,13 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         prompt.button(QMessageBox::Save)->setText("保存并退出");prompt.button(QMessageBox::Discard)->setText("不保存退出");prompt.button(QMessageBox::Cancel)->setText("取消");
         prompt.setDefaultButton(QMessageBox::Save);prompt.setEscapeButton(QMessageBox::Cancel);
         const auto choice=prompt.exec();
+        AppLog::instance().write(LogLevel::Info,"工程",choice==QMessageBox::Save?"退出前选择保存工程。":choice==QMessageBox::Discard?"退出前选择放弃未保存修改。":"取消退出。");
         if((choice!=QMessageBox::Save&&choice!=QMessageBox::Discard)||(choice==QMessageBox::Save&&!saveWorkbenchProject(false))){
             event->ignore();roll_->setEditingEnabled(true);updateGlobalShortcuts();updateEditActions();return;
         }
     }
     closing_=true;for(auto* shortcut:globalShortcuts_)shortcut->disable();
+    AppLog::instance().write(LogLevel::Info,"应用","确认退出，正在停止播放并释放资源。");
     if(practicePage_)practicePage_->stop();
     performance_->stopPerformance();
     miniRefresh_.stop();audio_.pause();timer_.stop();if(mini_)mini_->hide();
@@ -695,15 +729,16 @@ void MainWindow::openFiles(const QStringList& paths){
 }
 void MainWindow::importMidiFiles(){
     if(busy_||closing_||closeAfterImport_||closePromptOpen_||roll_->isEditing())return;
-    clock_->cancelEditing();if(practicePage_->isVisible())practicePage_->stop();
+    clock_->cancelEditing();if(practicePage_->isVisible()||practicePage_->miniMode())practicePage_->stop();
     QFileDialog dialog(roll_->window(),"选择 MIDI 文件",{},"MIDI 文件 (*.mid *.midi)");
     dialog.setObjectName("importMidiDialog");dialog.setAcceptMode(QFileDialog::AcceptOpen);dialog.setFileMode(QFileDialog::ExistingFiles);
     if(dialog.exec()==QDialog::Accepted)importFiles(dialog.selectedFiles());
 }
 void MainWindow::importFiles(const QStringList& paths) {
     if(paths.isEmpty()||busy_||closeAfterImport_||closePromptOpen_)return;
-    if(practicePage_&&practicePage_->isVisible())leavePractice();
+    if(practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode()))leavePractice();
     if(auto* prompt=findChild<QMessageBox*>("importConflictDialog");prompt&&prompt->isVisible())return;
+    AppLog::instance().write(LogLevel::Info,"MIDI 导入",QString("开始批量导入 %1 个文件。").arg(paths.size()));
     settingsNavigation_->setChecked(false);
     clock_->cancelEditing();
     performance_->stopPerformance();performance_->setLibraryBusy(true);
@@ -767,6 +802,7 @@ void MainWindow::promptImportConflicts(int firstImported){
             s.result=std::make_shared<Conversion>(convert(*s.song,s.settings,s.edits));
         }
         if(current_>=0)refreshResult(false);
+        AppLog::instance().write(LogLevel::Info,"音符编辑",QString("导入冲突处理：%1 %2 个音符。").arg(deleting?"删除":"跳过").arg(changed));
         status_->setText(QString("已%1 %2 个冲突音符，可在对应曲目中撤销。").arg(deleting?"删除":"跳过").arg(changed));
     });
     box->open();
@@ -774,10 +810,11 @@ void MainWindow::promptImportConflicts(int firstImported){
 void MainWindow::selectSong(int index) {
     if(busy_||index<0||index>=static_cast<int>(sessions_.size()))return;
     clock_->cancelEditing();
-    if(practicePage_&&practicePage_->isVisible())leavePractice();
+    if(practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode()))leavePractice();
     performance_->stopPerformance();
     pausePreview(true);current_=index;updating_=true;deleteMode_->setChecked(false);addNote_->setChecked(false);
     const auto& s=sessions_[index];const auto& settings=s.settings;
+    AppLog::instance().write(LogLevel::Info,"曲目库",QString("选择曲目 %1 / %2：%3").arg(index+1).arg(sessions_.size()).arg(QFileInfo(s.path).fileName()));
     songTitle_->setText(QFileInfo(s.path).completeBaseName());
     tracks_->clear();filter_->clear();filter_->addItem("全部音轨",-1);
     for(size_t i=0;i<s.song->tracks.size();++i) {
@@ -806,6 +843,7 @@ void MainWindow::moveSong(int from,int to){
 }
 void MainWindow::removeSong(int index){
     if(busy_||index<0||index>=static_cast<int>(sessions_.size()))return;
+    AppLog::instance().write(LogLevel::Info,"曲目库","移除曲目："+QFileInfo(sessions_[index].path).fileName());
     clock_->cancelEditing();
     performance_->stopPerformance();pausePreview();
     const bool removedCurrent=index==current_;
@@ -831,7 +869,8 @@ void MainWindow::clearSong(){
 }
 void MainWindow::markDirty() {if(!updating_&&current_>=0){settingsPending_=true;dirty_->setText("有未应用设置 · 点击下方应用");}}
 void MainWindow::showWarning(const QString& title,const QString& message) {
-    if(mini_&&mini_->isVisible())restoreMainWindow();
+    AppLog::instance().write(title.contains("失败")?LogLevel::Error:LogLevel::Warning,"工作台",title+"："+message);
+    if((practicePage_&&practicePage_->miniMode())||(mini_&&mini_->isVisible()))restoreMainWindow();
     status_->setText(message.section('\n',0,0));
     if(auto* existing=findChild<QMessageBox*>("validationWarning");existing&&existing->isVisible()){existing->raise();return;}
     auto* box=new QMessageBox(QMessageBox::Warning,title,message,QMessageBox::Ok,roll_->window());
@@ -850,6 +889,7 @@ void MainWindow::applySettings() {
     s.autoTranspose=octaveMode_->currentIndex()==0;
     s.nearest=strategy_->currentIndex()==0;s.fixedTempo=tempoMode_->currentIndex()==1;s.bpm=bpm_->value();s.speed=speed_->value();s.holdMs=hold_->value();s.gapMs=gap_->value();
     settingsPending_=false;dirty_->setText("设置已应用");recalculate();
+    AppLog::instance().write(LogLevel::Info,"转换",QString("已应用 %1：%2 · BPM %3 · 倍率 %4 · 按下 %5 ms · 间隔 %6 ms · 冲突 %7 处").arg(QFileInfo(sessions_[current_].path).fileName(),s.fixedTempo?"固定速度":"跟随原曲").arg(s.bpm).arg(s.speed).arg(s.holdMs).arg(s.gapMs).arg(sessions_[current_].result->conflicts));
 }
 void MainWindow::recalculate(bool fit) {
     if(current_<0)return;pausePreview(true);auto& s=sessions_[current_];
@@ -915,7 +955,8 @@ void MainWindow::startPreview() {
     }
     if(position_<first||position_>=last)position_=first;
     QString error;
-    if(!audio_.play(*sessions_[current_].song,segment,position_,error,last)){status_->setText(error);return;}
+    if(!audio_.play(*sessions_[current_].song,segment,position_,error,last)){AppLog::instance().write(LogLevel::Error,"试听",error);status_->setText(error);return;}
+    AppLog::instance().write(LogLevel::Info,"试听",QString("开始试听 %1：%2 → %3 秒 · 音量 %4%%").arg(QFileInfo(sessions_[current_].path).fileName()).arg(position_,0,'f',2).arg(last,0,'f',2).arg(volume_->value()));
     timer_.start();performance_->setPreviewPlaying(true);deleteMode_->setChecked(false);roll_->setEditingEnabled(false);updateEditActions();
     play_->setText("暂停试听");status_->setText("手碟试听中 · 音符编辑已锁定 · "+Preferences::instance().shortcutText(ShortcutAction::Preview)+" 暂停/继续");
 }
@@ -994,7 +1035,7 @@ void MainWindow::showDiagnostics() {
 }
 void MainWindow::exportCurrentMidi(){
     if(current_<0||busy_||performance_->active()||roll_->isEditing())return;
-    if(practicePage_->isVisible())practicePage_->stop();pausePreview();
+    if(practicePage_->isVisible()||practicePage_->miniMode())practicePage_->stop();pausePreview();
     if(!validateParameters())return;
     if(settingsPending_){showWarning("请先应用参数","转换参数已修改，请先应用设置，再导出当前曲目的 MIDI。");return;}
     const auto& session=sessions_[current_];
@@ -1004,6 +1045,7 @@ void MainWindow::exportCurrentMidi(){
     const QFileInfo source(session.path);
     QString directory,error;
     if(!prepareExportDirectory(ExportKind::Midi,directory,error)){
+        AppLog::instance().write(LogLevel::Warning,"MIDI 导出",error);
         QMessageBox::warning(roll_->window(),"默认导出目录不可用",error+"\n\n请在保存窗口选择其他位置。");
         directory=QFileInfo(directory).absolutePath();
     }
@@ -1017,6 +1059,7 @@ void MainWindow::exportCurrentMidi(){
         showWarning("导出失败","无法保存 MIDI："+file.errorString());return;
     }
     rememberExportDirectory(ExportKind::Midi,path);
+    AppLog::instance().write(LogLevel::Info,"MIDI 导出",QString("导出成功：%1 · %2 字节").arg(path).arg(bytes.size()));
     status_->setText("已导出当前曲目 MIDI："+QFileInfo(path).fileName());status_->setToolTip(path);
 }
 bool MainWindow::currentScoreText(TextScoreFormat format,QString& text){
@@ -1034,6 +1077,7 @@ bool MainWindow::currentScoreText(TextScoreFormat format,QString& text){
 void MainWindow::copyCurrentScore(TextScoreFormat format){
     QString text;if(!currentScoreText(format,text))return;
     QApplication::clipboard()->setText(text);
+    AppLog::instance().write(LogLevel::Info,"文字谱",QString("已复制%1：%2").arg(format==TextScoreFormat::Hand?"手弹谱":"键谱",QFileInfo(sessions_[current_].path).fileName()));
     status_->setText(QString("已复制%1：%2 · 可直接粘贴。")
         .arg(format==TextScoreFormat::Hand?"手弹谱":"键谱",QFileInfo(sessions_[current_].path).completeBaseName()));status_->setToolTip({});
 }
@@ -1051,10 +1095,11 @@ void MainWindow::exportCurrentScore(TextScoreFormat format){
         showWarning("导出失败","无法保存 "+name+"："+file.errorString());return;
     }
     status_->setText("已导出"+name+" TXT："+QFileInfo(path).fileName());status_->setToolTip(path);
+    AppLog::instance().write(LogLevel::Info,"文字谱","导出成功："+path);
 }
 ProjectState MainWindow::captureProject() const{
     ProjectState p;p.sessions=sessions_;p.current=current_;p.position=position_;p.zoom=roll_->zoom();
-    if(practicePage_&&practicePage_->isVisible())p.position=practicePage_->position();
+    if(practicePage_&&(practicePage_->isVisible()||practicePage_->miniMode()))p.position=practicePage_->position();
     for(auto& s:p.sessions)s.song=std::make_shared<Song>(*s.song);
     p.volume=volume_->value();p.trackFilter=current_<0?-1:filter_->currentData().toInt();p.tab=tabs_->currentIndex();
     p.horizontalScroll=roll_->horizontalScrollBar()->value();p.verticalScroll=roll_->verticalScrollBar()->value();
@@ -1069,7 +1114,7 @@ ProjectState MainWindow::captureProject() const{
 }
 void MainWindow::restoreProject(ProjectState state){
     clock_->cancelEditing();
-    if(practicePage_->isVisible())leavePractice();
+    if(practicePage_->isVisible()||practicePage_->miniMode())leavePractice();
     if(trackWindow_&&trackWindow_->isVisible())trackWindow_->close();
     settingsNavigation_->setChecked(false);performance_->stopPerformance();pausePreview();
     miniSeekResume_=false;miniSeekSong_.reset();
@@ -1108,6 +1153,7 @@ bool MainWindow::hasUnsavedProjectChanges() const{
     return projectNeedsSave_||savedProjectFingerprint_!=projectFingerprint(captureProject());
 }
 bool MainWindow::writeWorkbenchProject(const QString& path,ProjectState state,ProjectStorage storage){
+    AppLog::instance().write(LogLevel::Info,"工程",QString("开始保存工程：%1 · %2 首曲目 · %3").arg(path).arg(state.sessions.size()).arg(storage==ProjectStorage::Embedded?"内嵌 MIDI":"引用本地 MIDI"));
     QString error;if(!saveProject(path,state,storage,error)){showWarning("保存工程失败",error);return false;}
     // Keep references chosen during export for the next regular save.
     for(size_t i=0;i<sessions_.size()&&i<state.sessions.size();++i){
@@ -1119,12 +1165,13 @@ bool MainWindow::writeWorkbenchProject(const QString& path,ProjectState state,Pr
     if(current_>=0)songTitle_->setText(QFileInfo(sessions_[current_].path).completeBaseName());
     projectPath_=path;projectStorage_=storage;projectNeedsSave_=false;savedProjectFingerprint_=projectFingerprint(captureProject());
     rememberExportDirectory(ExportKind::Project,path);
+    AppLog::instance().write(LogLevel::Info,"工程","工程保存成功："+path);
     QSettings().setValue("project/lastPath",path);status_->setText(QString("已保存工程：%1 · %2 首曲目").arg(QFileInfo(path).fileName()).arg(state.sessions.size()));status_->setToolTip(path);return true;
 }
 bool MainWindow::saveWorkbenchProject(bool saveAs){
     if(busy_||performance_->active()||roll_->isEditing())return false;
     clock_->cancelEditing();if(current_>=0&&!validateParameters())return false;
-    if(practicePage_->isVisible())practicePage_->stop();pausePreview();
+    if(practicePage_->isVisible()||practicePage_->miniMode())practicePage_->stop();pausePreview();
     if(!saveAs&&!projectPath_.isEmpty())return writeWorkbenchProject(projectPath_,captureProject(),projectStorage_);
     auto state=captureProject();ProjectExportDialog options(state,roll_->window());
     if(options.exec()!=QDialog::Accepted)return false;
@@ -1135,27 +1182,30 @@ bool MainWindow::saveWorkbenchProject(bool saveAs){
     }
     QString directory,error;
     if(!prepareExportDirectory(ExportKind::Project,directory,error)){
+        AppLog::instance().write(LogLevel::Warning,"工程",error);
         QMessageBox::warning(roll_->window(),"默认导出目录不可用",error+"\n\n请在保存窗口选择其他位置。");
         directory=QFileInfo(directory).absolutePath();
     }
     QFileDialog dialog(roll_->window(),"导出工作台工程",directory,"工作台工程 (*.rockproj)");
     dialog.setObjectName("saveProjectDialog");dialog.setAcceptMode(QFileDialog::AcceptSave);dialog.setFileMode(QFileDialog::AnyFile);dialog.setDefaultSuffix("rockproj");
-    dialog.selectFile(current_>=0?QFileInfo(sessions_[current_].path).completeBaseName()+".rockproj":"工作台.rockproj");
+    dialog.selectFile("project.rockproj");
     if(dialog.exec()!=QDialog::Accepted||dialog.selectedFiles().isEmpty())return false;
     return writeWorkbenchProject(dialog.selectedFiles().front(),std::move(state),options.storage());
 }
 void MainWindow::importWorkbenchProject(){
     if(busy_||performance_->active()||roll_->isEditing())return;
-    clock_->cancelEditing();if(practicePage_->isVisible())practicePage_->stop();
+    clock_->cancelEditing();if(practicePage_->isVisible()||practicePage_->miniMode())practicePage_->stop();
     QFileDialog dialog(roll_->window(),"导入工作台工程",QSettings().value("project/lastPath").toString(),"工作台工程 (*.rockproj)");
     dialog.setObjectName("importProjectDialog");dialog.setAcceptMode(QFileDialog::AcceptOpen);dialog.setFileMode(QFileDialog::ExistingFile);
     if(dialog.exec()==QDialog::Accepted&&!dialog.selectedFiles().isEmpty())importProjectFile(dialog.selectedFiles().front());
 }
 bool MainWindow::importProjectFile(const QString& path){
     if(busy_||performance_->active()||roll_->isEditing())return false;
+    AppLog::instance().write(LogLevel::Info,"工程","开始导入工程："+path);
     ProjectState state;ProjectLoadInfo info;QString error;bool locateCancelled=false;std::map<QString,QString> located;
     const auto locate=[this,&locateCancelled,&located](const QString& expected){
         if(auto it=located.find(expected);it!=located.end())return MissingMidiResolution{MissingMidiAction::Locate,it->second};
+        AppLog::instance().write(LogLevel::Warning,"工程","引用 MIDI 无法读取或已变化："+expected);
         QMessageBox prompt(QMessageBox::Warning,"重新定位引用 MIDI","工程引用的 MIDI 找不到或内容已经改变：\n"+expected+"\n\n选择 MIDI：定位同一份原始文件。\n取消当前 MIDI 导入：跳过这一首，继续导入其他曲目。\n直接取消导入：保留当前工作台，结束此次工程导入。",QMessageBox::NoButton,roll_->window());
         prompt.setObjectName("locateProjectMidiPrompt");prompt.setTextFormat(Qt::PlainText);
         auto* choose=prompt.addButton("选择 MIDI",QMessageBox::ActionRole);choose->setObjectName("locateProjectMidi");
@@ -1163,10 +1213,10 @@ bool MainWindow::importProjectFile(const QString& path){
         auto* cancel=prompt.addButton("直接取消导入",QMessageBox::RejectRole);cancel->setObjectName("cancelProjectImport");prompt.setDefaultButton(choose);prompt.setEscapeButton(cancel);
         for(;;){
             prompt.exec();
-            if(prompt.clickedButton()==skip)return MissingMidiResolution{MissingMidiAction::Skip,{}};
-            if(prompt.clickedButton()!=choose){locateCancelled=true;return MissingMidiResolution{};}
+            if(prompt.clickedButton()==skip){AppLog::instance().write(LogLevel::Info,"工程","跳过当前引用 MIDI："+expected);return MissingMidiResolution{MissingMidiAction::Skip,{}};}
+            if(prompt.clickedButton()!=choose){AppLog::instance().write(LogLevel::Info,"工程","取消工程导入，保留原工作台。");locateCancelled=true;return MissingMidiResolution{};}
             const auto path=QFileDialog::getOpenFileName(roll_->window(),"重新定位工程 MIDI",QFileInfo(expected).absolutePath(),"MIDI 文件 (*.mid *.midi)");
-            if(!path.isEmpty()){located[expected]=path;return MissingMidiResolution{MissingMidiAction::Locate,path};}
+            if(!path.isEmpty()){AppLog::instance().write(LogLevel::Info,"工程","重新定位 MIDI："+path);located[expected]=path;return MissingMidiResolution{MissingMidiAction::Locate,path};}
             // Cancelling the file picker returns to the three explicit choices.
         }
     };
@@ -1174,22 +1224,24 @@ bool MainWindow::importProjectFile(const QString& path){
         if(locateCancelled)status_->setText("已取消工程导入，当前工作台保留。");else showWarning("导入工程失败",error);return false;
     }
     if(state.sessions.empty()&&!info.skippedOriginalIndexes.empty()){
+        AppLog::instance().write(LogLevel::Warning,"工程","工程中的曲目已全部跳过，保留原工作台。");
         status_->setText("工程中的曲目已全部跳过，当前工作台保留。");return false;
     }
     if(!sessions_.empty()){
         QMessageBox prompt(QMessageBox::Warning,"替换当前工作台",QString("当前工作台有 %1 首曲目。\n导入工程将替换曲目列表、转换参数和全部编辑记录，未保存的工作将丢失。\n\n将导入 %2 首曲目，跳过 %3 首。是否继续？").arg(sessions_.size()).arg(state.sessions.size()).arg(info.skippedOriginalIndexes.size()),QMessageBox::Yes|QMessageBox::Cancel,roll_->window());
         prompt.setObjectName("replaceProjectPrompt");prompt.setTextFormat(Qt::PlainText);prompt.button(QMessageBox::Yes)->setText("覆盖并导入");prompt.button(QMessageBox::Cancel)->setText("取消");prompt.setDefaultButton(QMessageBox::Cancel);prompt.setEscapeButton(QMessageBox::Cancel);
-        if(prompt.exec()!=QMessageBox::Yes){status_->setText("已取消工程导入，当前工作台保留。");return false;}
+        if(prompt.exec()!=QMessageBox::Yes){AppLog::instance().write(LogLevel::Info,"工程","取消覆盖工作台，工程未导入。");status_->setText("已取消工程导入，当前工作台保留。");return false;}
     }
     restoreProject(std::move(state));QSettings().setValue("project/lastPath",path);
     projectPath_=path;projectStorage_=info.storage;projectNeedsSave_=info.relocated||!info.skippedOriginalIndexes.empty();savedProjectFingerprint_=projectFingerprint(captureProject());
+    AppLog::instance().write(LogLevel::Info,"工程",QString("工程导入成功：%1 · 共 %2 首 · 跳过 %3 首").arg(path).arg(sessions_.size()).arg(info.skippedOriginalIndexes.size()));
     status_->setText(QString("已导入工程：%1 · 共 %2 首 · 跳过 %3 首 · 播放处于暂停状态").arg(QFileInfo(path).fileName()).arg(sessions_.size()).arg(info.skippedOriginalIndexes.size()));status_->setToolTip(path);return true;
 }
 void MainWindow::pausePreview(bool reset) {
     bool wasPlaying=timer_.isActive();timer_.stop();audio_.pause();play_->setText("手碟试听");
     if(performance_)performance_->setPreviewPlaying(false);
     roll_->setEditingEnabled(!performance_||!performance_->active());updateEditActions();
-    if(wasPlaying&&currentResult()){position_=std::min(selectedRange().second,audio_.position());roll_->setPlayhead(position_);status_->setText(audio_.finished()?"试听结束。":"试听已暂停，再次点击可从当前位置继续。");}
+    if(wasPlaying&&currentResult()){position_=std::min(selectedRange().second,audio_.position());AppLog::instance().write(LogLevel::Info,"试听",QString("%1 · 位置 %2 秒").arg(audio_.finished()?"试听结束":"暂停试听").arg(position_,0,'f',2));roll_->setPlayhead(position_);status_->setText(audio_.finished()?"试听结束。":"试听已暂停，再次点击可从当前位置继续。");}
     if(reset){position_=selectedRange().first;roll_->setPlayhead(position_);}refreshClock();
 }
 void MainWindow::refreshClock() {
@@ -1198,6 +1250,7 @@ void MainWindow::refreshClock() {
 }
 void MainWindow::seekPreviewTime(double seconds) {
     if(!currentResult()||busy_||roll_->isEditing()||!std::isfinite(seconds))return;
+    AppLog::instance().write(LogLevel::Info,"播放",QString("请求跳转到 %1 秒 · %2").arg(seconds,0,'f',2).arg(performance_->active()?"自动演奏":"试听"));
     if(performance_->active()){
         performance_->beginSeek();performance_->seekPerformance(seconds);return;
     }
@@ -1280,6 +1333,7 @@ void MainWindow::commitEdits(const NoteEdits& edits) {
         changes.push_back({source,before,edit});
     }
     if(changes.empty())return;
+    AppLog::instance().write(LogLevel::Debug,"音符编辑",QString("提交 %1 个音符的修改。").arg(changes.size()));
     s.history.resize(s.historyCursor);s.history.push_back(changes);
     if(s.history.size()>256)s.history.erase(s.history.begin());
     s.historyCursor=s.history.size();for(const auto& change:changes)s.edits[change.source]=*change.after;
@@ -1290,6 +1344,7 @@ void MainWindow::stepHistory(bool redo) {
     if(performance_->active())return;
     if(current_<0||busy_||timer_.isActive()||roll_->isEditing())return;auto& s=sessions_[current_];
     if((redo&&s.historyCursor==s.history.size())||(!redo&&s.historyCursor==0))return;
+    AppLog::instance().write(LogLevel::Debug,"音符编辑",redo?"重做一次编辑。":"撤销一次编辑。");
     const auto& entry=s.history[redo?s.historyCursor++:--s.historyCursor];
     if(entry.before){
         const auto& state=redo?*entry.after:*entry.before;
