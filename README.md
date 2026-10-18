@@ -2,8 +2,6 @@
 
 **v1.2.6** · Windows 九键音乐工作台，将 MIDI 转换为固定九音键谱，支持编辑、手碟试听、跟练与自动演奏。
 
-By 北辰_kano · [GitHub](https://github.com/kanostars/Rock-auto-music-player) · [bilibili](https://space.bilibili.com/481122212)
-
 **此软件永久免费，一切商用皆是骗子。**
 
 ## 快速开始
