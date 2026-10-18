@@ -10,7 +10,7 @@ By 北辰_kano · [GitHub](https://github.com/kanostars/Rock-auto-music-player) 
 
 1. 在 [Releases](https://github.com/kanostars/Rock-auto-music-player/releases) 下载安装版，或完整解压便携 ZIP 后运行 `RockAutoMusicPlay.exe`。
 2. 导入 / 拖入 MIDI，可批量追加；也可使用 `samples/studio-demo.mid` 体验。选择音轨、调整参数后点击“应用设置 · 重新转换”。
-3. 使用“手碟试听”或“跟练练习”；自动向游戏按键需另行安装 [Interception](https://github.com/oblitum/Interception) 驱动并重启，再选择输出键盘与目标窗口。
+3. 使用“手碟试听”或“跟练练习”；自动向游戏按键需 [Interception](https://github.com/oblitum/Interception) 驱动。安装版检测缺失时可勾选下载并安装，授权后自动完成并提示重启；便携版需自行安装。重启后选择输出键盘与目标窗口。
 
 首次启动会显示功能帮助。之后可点击设置右侧的 ⓘ，按步骤高亮查看功能，胶囊小窗会实际打开介绍。
 
@@ -67,6 +67,6 @@ cmake --build build
 
 ## 范围与许可
 
-支持 SMF Format 0/1、PPQ、原曲变速、固定 BPM 与中文路径；不支持 Format 2、SMPTE、实时 MIDI、弯音 / 踏板效果或音频导出。自动演奏仅支持 Windows，游戏兼容性取决于目标环境；程序不安装 Interception 驱动。
+支持 SMF Format 0/1、PPQ、原曲变速、固定 BPM 与中文路径；不支持 Format 2、SMPTE、实时 MIDI、弯音 / 踏板效果或音频导出。自动演奏仅支持 Windows，游戏兼容性取决于目标环境。驱动为可选项，取消选装仍可使用试听和跟练；卸载程序会保留驱动。
 
 项目采用 [MIT 许可](LICENSE)。第三方来源与许可见 [依赖说明](third_party/SOURCES.md)、[Interception](third_party/interception/README.md)、[运行库](third_party/runtime-licenses/README.md) 和 [手碟采样](assets/handpan/README.md)。

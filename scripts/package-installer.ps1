@@ -58,6 +58,7 @@ if ((Get-Item -LiteralPath $packageExe).VersionInfo.ProductVersion -ne $Version)
 }
 foreach ($required in @('interception.dll', 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll',
     'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll', 'platforms/qwindows.dll',
+    'imageformats/qgif.dll', 'imageformats/qjpeg.dll', 'imageformats/qico.dll',
     'README.md', 'LICENSE', 'samples/studio-demo.mid', 'licenses/SOURCES.md', 'licenses/Interception.txt',
     'licenses/LGPL-3.0-only.txt', 'licenses/GCC-exception-3.1.txt', 'SHA256SUMS.txt')) {
     if (!(Test-Path -LiteralPath (Join-Path $PackageDir $required) -PathType Leaf)) {
