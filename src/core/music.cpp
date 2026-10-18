@@ -305,10 +305,11 @@ Conversion convert(const Song& song,const Settings& s,const NoteEdits& edits) {
             else {m.mapping=Mapping::Skipped; ++out.skipped;}
         }
         out.notes.push_back(m);
-        if(m.target>=0) {
-            groups[{m.startTick,m.target}].push_back(i);
+        if(m.target>=0)groups[{m.startTick,m.target}].push_back(i);
+        // Skipped blocks remain visible and editable, including pasted blocks
+        // beyond the original MIDI end; undo/deletion must still shrink them away.
+        if(m.target>=0||m.mapping==Mapping::Skipped||m.mapping==Mapping::ConflictSkipped)
             out.duration=std::max(out.duration,m.start+m.duration);
-        }
     }
     std::array<double,9> last; last.fill(-1e100);
     std::map<int,int> chordCounts;

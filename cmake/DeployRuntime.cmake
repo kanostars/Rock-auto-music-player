@@ -27,5 +27,14 @@ function(rock_deploy_runtime target uses_qt)
                 "$<TARGET_FILE_DIR:${target}>/platforms"
             COMMENT "Deploying Qt runtime and Windows platform plugin for ${target}"
             COMMAND_EXPAND_LISTS VERBATIM)
+        foreach(plugin QJpegPlugin QGifPlugin QICOPlugin)
+            if(TARGET Qt6::${plugin})
+                add_custom_command(TARGET ${target} POST_BUILD
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>/imageformats"
+                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        "$<TARGET_FILE:Qt6::${plugin}>" "$<TARGET_FILE_DIR:${target}>/imageformats"
+                    COMMENT "Deploying image decoder ${plugin} for ${target}" VERBATIM)
+            endif()
+        endforeach()
     endif()
 endfunction()

@@ -27,6 +27,7 @@ public:
     void setSong(const QString& name,std::shared_ptr<const Song> song,
                  std::shared_ptr<const Conversion> result,const Settings& settings);
     void setState(const PracticeMiniState& state);
+    void setGuideView(bool numbers,bool appearance);
 signals:
     void playRequested();
     void restartRequested();
@@ -52,7 +53,7 @@ private:
     QStackedWidget* views_{};QWidget* keyView_{};NumberMeasureView* measure_{};
     std::array<QLabel*,9> chips_{};
     PracticeMiniState state_;
-    bool numbers_{},appearanceExpanded_{},dragging_{},arranging_{},screenConnected_{};
+    bool numbers_{},appearanceExpanded_{},dragging_{},arranging_{},screenConnected_{},guideView_{};
     double scale_{1};QPoint dragOffset_;
     double seekDuration_{};std::array<int,2> audibleVolumes_{60,60};
     QPointer<QScreen> screen_,gestureScreen_;

@@ -1,6 +1,7 @@
 #include "mini_player.h"
 #include "theme.h"
 #include "app/preferences.h"
+#include "app/branding.h"
 #include "playback_icons.h"
 #include <QCloseEvent>
 #include <QFrame>
@@ -69,7 +70,7 @@ protected:void paintEvent(QPaintEvent*) override{QPainter p(this);p.setRenderHin
 };
 }
 MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::FramelessWindowHint|Qt::WindowStaysOnTopHint|Qt::WindowDoesNotAcceptFocus){
-    setObjectName("miniPlayer");setWindowTitle("九键手碟 · 小窗播放器");setAttribute(Qt::WA_TranslucentBackground);setAttribute(Qt::WA_ShowWithoutActivating);setAttribute(Qt::WA_QuitOnClose,false);setFocusPolicy(Qt::NoFocus);
+    setObjectName("miniPlayer");setWindowTitle(QString::fromUtf8(appDisplayName)+" · 小窗播放器");setAttribute(Qt::WA_TranslucentBackground);setAttribute(Qt::WA_ShowWithoutActivating);setAttribute(Qt::WA_QuitOnClose,false);setFocusPolicy(Qt::NoFocus);
     Theme::setStyle(this,R"(
         QWidget {font-family:'Microsoft YaHei UI';font-size:12px;color:#203d4e;}
         QFrame#miniCapsule {background:white;border:1px solid #dce6eb;border-radius:56px;}
@@ -83,6 +84,8 @@ MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::Framel
         QPushButton#miniPlay {background:#178e80;border-radius:21px;}
         QPushButton#miniPlay:hover {background:#107566;}
         QPushButton#miniPlay:disabled {background:#c5dcd7;}
+        QPushButton#miniPlay[needsOutput=true]:enabled {background:#bd4f5b;}
+        QPushButton#miniPlay[needsOutput=true]:enabled:hover {background:#b64957;}
         QPushButton#miniQuit:hover,QPushButton#miniRemove:hover {background:#fbebed;}
         QListView {border:0;background:transparent;outline:0;}
         QSlider::groove:horizontal {height:3px;background:#e7eef0;border-radius:1px;}
@@ -131,7 +134,7 @@ MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::Framel
     connect(mode_,&QPushButton::clicked,this,&MiniPlayer::modeRequested);connect(list_,&QPushButton::clicked,this,&MiniPlayer::toggleList);connect(restore,&QPushButton::clicked,this,&MiniPlayer::restoreRequested);connect(quit,&QPushButton::clicked,this,&MiniPlayer::quitRequested);
     connect(opacityButton_,&QPushButton::clicked,this,&MiniPlayer::toggleOpacity);
     auto updateOpacity=[this](int value){setWindowOpacity(value/100.0);opacityText_->setText(QString::number(value)+"%");opacity_->setToolTip(QString("小窗透明度 %1%（100% 为不透明）").arg(value));opacityButton_->setToolTip(QString("调整小窗透明度 · %1%").arg(value));};
-    connect(opacity_,&QSlider::valueChanged,this,[updateOpacity](int value){updateOpacity(value);QSettings().setValue("miniPlayer/opacity",value);});updateOpacity(opacity_->value());
+    connect(opacity_,&QSlider::valueChanged,this,[this,updateOpacity](int value){updateOpacity(value);if(!guideView_)QSettings().setValue("miniPlayer/opacity",value);});updateOpacity(opacity_->value());
     connect(progress_,&QSlider::sliderPressed,this,[this]{if(state_.seekEnabled)emit seekStarted();});
     connect(progress_,&QSlider::valueChanged,this,[this](int value){if(progress_->isSliderDown())elapsed_->setText(clockText(state_.duration*value/1000000.0));});
     connect(progress_,&QSlider::sliderReleased,this,[this]{if(state_.seekEnabled)emit seekRequested(state_.duration*progress_->value()/1000000.0);});
@@ -143,11 +146,17 @@ MiniPlayer::MiniPlayer(QListWidget* library):QWidget(nullptr,Qt::Tool|Qt::Framel
 }
 void MiniPlayer::setState(const MiniPlayerState& s){
     const bool playingChanged=!initialized_||s.playing!=state_.playing;
+    const bool needsOutput=s.performance&&!s.outputReady;
+    const bool readinessChanged=!initialized_||needsOutput!=(state_.performance&&!state_.outputReady);
     const bool modeChanged=!initialized_||s.mode!=state_.mode;state_=s;initialized_=true;
     title_->setText(title_->fontMetrics().elidedText(s.title,Qt::ElideRight,std::max(0,title_->width())));title_->setToolTip(s.title);
     status_->setText(status_->fontMetrics().elidedText(s.status,Qt::ElideRight,std::max(0,status_->width())));status_->setToolTip(s.detail);
     audition_->setChecked(!s.performance);performance_->setChecked(s.performance);audition_->setEnabled(!s.busy);performance_->setEnabled(!s.busy);
-    if(playingChanged){play_->setIcon(playlistIcon(s.playing?PlaylistIcon::Pause:PlaylistIcon::Play,true));play_->setToolTip(s.playing?"暂停":"播放 / 继续");play_->setAccessibleName(play_->toolTip());}
+    if(playingChanged)play_->setIcon(playlistIcon(s.playing?PlaylistIcon::Pause:PlaylistIcon::Play,true));
+    if(readinessChanged){
+        play_->setProperty("needsOutput",needsOutput);play_->style()->unpolish(play_);play_->style()->polish(play_);play_->update();
+    }
+    if(playingChanged||readinessChanged){play_->setToolTip(needsOutput?"选择输出键盘和目标窗口":s.playing?"暂停":"播放 / 继续");play_->setAccessibleName(play_->toolTip());}
     play_->setEnabled(s.canPlay&&!s.busy);mode_->setEnabled(s.modeEnabled&&!s.busy);
     if(modeChanged){mode_->setIcon(playlistIcon(modeIcons[s.mode]));mode_->setToolTip(modeNames[s.mode]+" · 点击切换");mode_->setAccessibleName(mode_->toolTip());}
     const int count=songs_->model()->rowCount(),row=songs_->currentIndex().row();songs_->setEnabled(!s.busy);count_->setText(QString("%1 首").arg(count));
@@ -195,6 +204,14 @@ void MiniPlayer::arrange(const QPoint& capsuleOrigin,QScreen* preferred){
 }
 void MiniPlayer::toggleList(){const auto origin=capsule_->mapToGlobal(QPoint());expanded_=!expanded_;list_->setChecked(expanded_);list_->setToolTip(expanded_?"收起曲目列表":"展开曲目列表");list_->setAccessibleName(list_->toolTip());arrange(origin);savePosition();}
 void MiniPlayer::toggleOpacity(){const auto origin=capsule_->mapToGlobal(QPoint());opacityExpanded_=!opacityExpanded_;opacityButton_->setChecked(opacityExpanded_);arrange(origin);savePosition();}
+void MiniPlayer::setGuideView(bool queue,bool opacity){
+    const auto origin=capsule_->mapToGlobal(QPoint());guideView_=true;expanded_=queue;opacityExpanded_=opacity;
+    {const QSignalBlocker blocker(opacity_);opacity_->setValue(100);}setWindowOpacity(1);opacityText_->setText("100%");opacity_->setToolTip("小窗透明度 100%（100% 为不透明）");
+    list_->setChecked(expanded_);list_->setToolTip(expanded_?"收起曲目列表":"展开曲目列表");list_->setAccessibleName(list_->toolTip());
+    opacityButton_->setChecked(opacityExpanded_);opacityButton_->setToolTip(QString("%1 · %2%").arg(opacityExpanded_?"收起小窗透明度设置":"调整小窗透明度").arg(opacity_->value()));opacityButton_->setAccessibleName(opacityButton_->toolTip());
+    queue_->setVisible(expanded_);opacityPanel_->setVisible(opacityExpanded_);
+    if(isVisible())arrange(origin);
+}
 void MiniPlayer::captureMetrics(){
     baseStyle_=Theme::sourceStyle(this);
     for(auto* widget:findChildren<QWidget*>()){
@@ -229,7 +246,7 @@ QPoint MiniPlayer::boundedPosition(const QPoint& requested,QScreen* screen,QSize
     if(!screen)return requested;if(!extent.isValid())extent=size();const auto r=screen->availableGeometry();
     return {std::clamp(requested.x(),r.left(),std::max(r.left(),r.right()-extent.width()+1)),std::clamp(requested.y(),r.top(),std::max(r.top(),r.bottom()-extent.height()+1))};
 }
-void MiniPlayer::savePosition(){QSettings settings;settings.setValue("miniPlayer/position",capsule_->mapToGlobal(QPoint()));settings.setValue("miniPlayer/size",capsuleSize_);}
+void MiniPlayer::savePosition(){if(guideView_)return;QSettings settings;settings.setValue("miniPlayer/position",capsule_->mapToGlobal(QPoint()));settings.setValue("miniPlayer/size",capsuleSize_);}
 bool MiniPlayer::eventFilter(QObject* watched,QEvent* event){
     if(watched==resizeHandle_){
         if(event->type()==QEvent::MouseButtonPress){auto* e=static_cast<QMouseEvent*>(event);if(e->button()==Qt::LeftButton){

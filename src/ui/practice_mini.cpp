@@ -3,6 +3,7 @@
 #include "playback_icons.h"
 #include "theme.h"
 #include "app/preferences.h"
+#include "app/branding.h"
 #include <QCloseEvent>
 #include <QFrame>
 #include <QGuiApplication>
@@ -125,7 +126,7 @@ private:
 }
 
 PracticeMini::PracticeMini(QWidget* parent):QWidget(parent,Qt::Tool|Qt::FramelessWindowHint|Qt::WindowStaysOnTopHint|Qt::WindowDoesNotAcceptFocus) {
-    setObjectName("practiceMini");setWindowTitle("九键手碟 · 跟练小窗");
+    setObjectName("practiceMini");setWindowTitle(QString::fromUtf8(appDisplayName)+" · 跟练小窗");
     setAttribute(Qt::WA_TranslucentBackground);setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_QuitOnClose,false);setFocusPolicy(Qt::NoFocus);
     QSettings saved;
@@ -184,18 +185,18 @@ PracticeMini::PracticeMini(QWidget* parent):QWidget(parent,Qt::Tool|Qt::Frameles
     connect(display_,&QPushButton::clicked,this,[this] {
         numbers_=!numbers_;display_->setChecked(numbers_);actionTip(display_,numbers_?"当前显示数字简谱 · 点击切换按键提示":"当前显示按键提示 · 点击切换数字简谱");refreshIcons();
         views_->setCurrentWidget(numbers_?static_cast<QWidget*>(measure_):keyView_);
-        QSettings().setValue("practiceMini/numbers",numbers_);arrange(pos(),screen_);
+        if(!guideView_)QSettings().setValue("practiceMini/numbers",numbers_);arrange(pos(),screen_);
     });
     connect(appearanceButton_,&QPushButton::clicked,this,[this] {
         appearanceExpanded_=!appearanceExpanded_;appearance_->setVisible(appearanceExpanded_);
         appearanceButton_->setChecked(appearanceExpanded_);actionTip(appearanceButton_,appearanceExpanded_?"收起透明度和大小设置":"展开透明度和大小设置");
-        QSettings().setValue("practiceMini/appearanceExpanded",appearanceExpanded_);arrange(pos(),screen_);
+        if(!guideView_)QSettings().setValue("practiceMini/appearanceExpanded",appearanceExpanded_);arrange(pos(),screen_);
     });
     connect(opacity_,&QSlider::valueChanged,this,[this](int value) {
-        setWindowOpacity(value/100.0);opacityValue_->setText(QString::number(value)+"%");QSettings().setValue("practiceMini/opacity",value);
+        setWindowOpacity(value/100.0);opacityValue_->setText(QString::number(value)+"%");if(!guideView_)QSettings().setValue("practiceMini/opacity",value);
     });
     connect(sizeSlider_,&QSlider::valueChanged,this,[this](int value) {
-        sizeValue_->setText(QString::number(value)+"%");QSettings().setValue("practiceMini/scale",value);arrange(pos(),screen_);
+        sizeValue_->setText(QString::number(value)+"%");if(!guideView_)QSettings().setValue("practiceMini/scale",value);arrange(pos(),screen_);
     });
     seek->started=[this]{seekDuration_=std::isfinite(state_.duration)?std::max(0.0,state_.duration):0;emit seekStarted();};
     seek->completed=[this]{emit seekRequested(seekDuration_*seek_->value()/seek_->maximum());};
@@ -238,6 +239,16 @@ void PracticeMini::setState(const PracticeMiniState& state) {
     }
     empty_->setVisible((state.keys&0x1ff)==0);if(iconsChanged)refreshIcons();
     measure_->setPosition(std::isfinite(state.position)?std::max(0.0,state.position):0,state.keys,state.matched,state.following?state.practiceGroup:-1);
+}
+void PracticeMini::setGuideView(bool numbers,bool appearance) {
+    guideView_=true;numbers_=numbers;appearanceExpanded_=appearance;
+    {const QSignalBlocker blocker(opacity_);opacity_->setValue(100);}
+    {const QSignalBlocker blocker(sizeSlider_);sizeSlider_->setValue(100);}
+    setWindowOpacity(1);opacityValue_->setText("100%");sizeValue_->setText("100%");
+    display_->setChecked(numbers_);actionTip(display_,numbers_?"当前显示数字简谱 · 点击切换按键提示":"当前显示按键提示 · 点击切换数字简谱");refreshIcons();
+    views_->setCurrentWidget(numbers_?static_cast<QWidget*>(measure_):keyView_);
+    appearanceButton_->setChecked(appearanceExpanded_);actionTip(appearanceButton_,appearanceExpanded_?"收起透明度和大小设置":"展开透明度和大小设置");appearance_->setVisible(appearanceExpanded_);
+    if(isVisible())arrange(pos(),screen_);
 }
 void PracticeMini::refreshText() {
     QString status=state_.status.section(" · ",0,0);if(status.isEmpty())status=state_.following?"准备跟弹":"准备预览";
@@ -326,7 +337,7 @@ void PracticeMini::present(QScreen* preferred) {
     const auto saved=QSettings().value("practiceMini/position",initial).toPoint();
     auto* target=QGuiApplication::screenAt(saved+QPoint(80,30));arrange(saved,target?target:value);show();
 }
-void PracticeMini::savePosition(){QSettings().setValue("practiceMini/position",pos());}
+void PracticeMini::savePosition(){if(!guideView_)QSettings().setValue("practiceMini/position",pos());}
 bool PracticeMini::eventFilter(QObject* watched,QEvent* event) {
     if(event->type()==QEvent::MouseButtonPress) {
         auto* mouse=static_cast<QMouseEvent*>(event);

@@ -2,28 +2,38 @@
 #include <MidiFile.h>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
 namespace rock {
-std::string exportMidi(const Song& song,const Conversion& result,const Settings& settings){
+namespace {
+struct ExportRange { int first{},last{}; };
+std::string serializeMidi(const Song& song,const Conversion& result,const Settings& settings,
+                          std::optional<ExportRange> range){
     if(song.ppq<1||song.ppq>32767||!std::isfinite(settings.speed)||settings.speed<=0||
        !std::isfinite(settings.bpm)||settings.bpm<=0)
         throw std::invalid_argument("无法导出：曲目节奏参数无效。");
     struct Strike {int end{},velocity{};};
     std::map<std::pair<int,int>,Strike> strikes;
-    int endTick=song.endTick;
+    int endTick=range?range->last-range->first:song.endTick;
     for(const auto& note:result.notes){
         if(note.target<0)continue;
         if(note.target>=9||note.source<0||note.source>=static_cast<int>(song.notes.size())||
            note.startTick<0||note.endTick<=note.startTick)
             throw std::invalid_argument("无法导出：音符音高或时间无效。");
-        auto& strike=strikes[{note.startTick,note.target}];
-        strike.end=std::max(strike.end,note.endTick);
+        int start=note.startTick,end=note.endTick;
+        if(range){
+            if(end<=range->first||start>=range->last)continue;
+            start=std::max(start,range->first)-range->first;
+            end=std::min(end,range->last)-range->first;
+        }
+        auto& strike=strikes[{start,note.target}];
+        strike.end=std::max(strike.end,end);
         strike.velocity=std::max(strike.velocity,std::clamp(song.notes[note.source].velocity,1,127));
-        endTick=std::max(endTick,note.endTick);
+        endTick=std::max(endTick,end);
     }
-    if(strikes.empty())throw std::invalid_argument("当前曲目没有可导出的九键音符。");
+    if(strikes.empty())throw std::invalid_argument(range?"所选区域没有可导出的九键音符。":"当前曲目没有可导出的九键音符。");
 
     smf::MidiFile midi;midi.setTPQ(song.ppq);midi.addTrackName(0,0,"Nine-key handpan");
     auto addTempo=[&](int tick,double micros){
@@ -35,18 +45,32 @@ std::string exportMidi(const Song& song,const Conversion& result,const Settings&
         midi.addMetaEvent(0,tick,0x51,data);
     };
     if(settings.fixedTempo)addTempo(0,60000000.0/settings.bpm);
+    else if(range){
+        int active=500000;
+        for(const auto& tempo:song.tempos)if(tempo.tick<=range->first)active=tempo.micros;
+        addTempo(0,active);
+        for(const auto& tempo:song.tempos)
+            if(tempo.tick>range->first&&tempo.tick<range->last)addTempo(tempo.tick-range->first,tempo.micros);
+    }
     else {
         if(song.tempos.empty()||song.tempos.front().tick>0)addTempo(0,500000);
         for(const auto& tempo:song.tempos)if(tempo.tick<=endTick)addTempo(tempo.tick,tempo.micros);
     }
+    auto addSignature=[&](int tick,int numerator,int denominator){
+        unsigned power=0;for(auto value=denominator;value>1;value/=2)++power;
+        std::vector<unsigned char> data{static_cast<unsigned char>(numerator),static_cast<unsigned char>(power),24,8};
+        midi.addMetaEvent(0,tick,0x58,data);
+    };
+    TimeSignature activeSignature{0,4,4};
     for(const auto& signature:song.timeSignatures){
         if(signature.tick<0||signature.numerator<1||signature.numerator>255||signature.denominator<1||
            (signature.denominator&(signature.denominator-1)))throw std::invalid_argument("无法导出：曲目拍号无效。");
-        if(signature.tick>endTick)continue;
-        unsigned power=0;for(auto value=signature.denominator;value>1;value/=2)++power;
-        std::vector<unsigned char> data{static_cast<unsigned char>(signature.numerator),static_cast<unsigned char>(power),24,8};
-        midi.addMetaEvent(0,signature.tick,0x58,data);
+        if(range){
+            if(signature.tick<=range->first)activeSignature=signature;
+            else if(signature.tick<range->last)addSignature(signature.tick-range->first,signature.numerator,signature.denominator);
+        }else if(signature.tick<=endTick)addSignature(signature.tick,signature.numerator,signature.denominator);
     }
+    if(range)addSignature(0,activeSignature.numerator,activeSignature.denominator);
     // Separate overlapping strikes of the same pitch onto melodic channels. This
     // preserves their individual releases (including nested notes) on re-import.
     std::array<std::array<int,16>,9> releaseTicks{};
@@ -72,5 +96,13 @@ std::string exportMidi(const Song& song,const Conversion& result,const Settings&
     std::ostringstream stream(std::ios::binary);
     if(!midi.write(stream)||!stream)throw std::runtime_error("MIDI 编码失败。");
     return stream.str();
+}
+}
+std::string exportMidi(const Song& song,const Conversion& result,const Settings& settings){
+    return serializeMidi(song,result,settings,std::nullopt);
+}
+std::string exportMidiRange(const Song& song,const Conversion& result,const Settings& settings,int firstTick,int lastTick){
+    if(firstTick<0||lastTick<=firstTick)throw std::invalid_argument("MIDI 导出区间无效。");
+    return serializeMidi(song,result,settings,ExportRange{firstTick,lastTick});
 }
 }

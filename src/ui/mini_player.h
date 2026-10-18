@@ -8,7 +8,7 @@ namespace rock {
 struct MiniPlayerState {
     QString title,status,detail;
     double position{},duration{},rangeFirst{},rangeLast{};
-    bool performance{},playing{},canPlay{},busy{},seekEnabled{},modeEnabled{};
+    bool performance{},playing{},canPlay{},busy{},seekEnabled{},modeEnabled{},outputReady{};
     int mode{3};
     int volume{60};
 };
@@ -18,6 +18,7 @@ public:
     explicit MiniPlayer(QListWidget* library);
     void present(QScreen* preferred);
     void setState(const MiniPlayerState& state);
+    void setGuideView(bool queue,bool opacity);
 signals:
     void sourceRequested(bool performance);
     void playRequested();
@@ -48,7 +49,7 @@ private:
     bool resizing_{};QSize capsuleSize_{664,112},resizeStartSize_;
     QPoint resizeStartPoint_,resizeOrigin_;QPointer<QScreen> gestureScreen_;
     int lastCount_{-1};
-    bool opacityExpanded_{};double scale_{};QString baseStyle_;
+    bool opacityExpanded_{},guideView_{};double scale_{};QString baseStyle_;
     struct WidgetMetrics {QWidget* widget;QSize fixed,icon;};
     struct LayoutMetrics {QLayout* layout;QMargins margins;int spacing;};
     struct SpacerMetrics {QSpacerItem* spacer;QSize size;};

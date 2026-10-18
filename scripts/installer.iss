@@ -20,15 +20,15 @@
 
 [Setup]
 AppId={{22F6737E-4359-4BF0-948A-7D261B38358C}
-AppName=ROCK 九键音乐工作台
+AppName=ROCK / 洛克手碟演奏器
 AppVersion={#AppVersion}
-AppVerName=ROCK 九键音乐工作台 {#AppVersion}
+AppVerName=ROCK / 洛克手碟演奏器 {#AppVersion}
 AppPublisher=kanostars
 AppPublisherURL=https://github.com/kanostars/Rock-auto-music-player
 AppSupportURL=https://github.com/kanostars/Rock-auto-music-player/issues
 AppUpdatesURL=https://github.com/kanostars/Rock-auto-music-player/releases
 DefaultDirName={localappdata}\Programs\RockAutoMusicPlay
-DefaultGroupName=ROCK 九键音乐工作台
+DefaultGroupName=ROCK 洛克手碟演奏器
 DisableDirPage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -40,7 +40,7 @@ OutputBaseFilename=RockAutoMusicPlay-{#AppVersion}-setup-x64
 SetupIconFile={#AppIcon}
 UninstallDisplayIcon={app}\RockAutoMusicPlay.exe
 VersionInfoVersion={#AppVersion}
-VersionInfoProductName=RockAutoMusicPlay
+VersionInfoProductName=ROCK / 洛克手碟演奏器
 VersionInfoProductVersion={#AppVersion}
 VersionInfoProductTextVersion={#AppVersion}
 WizardStyle=modern
@@ -60,11 +60,11 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\ROCK 九键音乐工作台"; Filename: "{app}\RockAutoMusicPlay.exe"; WorkingDir: "{app}"
-Name: "{userdesktop}\ROCK 九键音乐工作台"; Filename: "{app}\RockAutoMusicPlay.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userprograms}\ROCK 洛克手碟演奏器"; Filename: "{app}\RockAutoMusicPlay.exe"; WorkingDir: "{app}"
+Name: "{userdesktop}\ROCK 洛克手碟演奏器"; Filename: "{app}\RockAutoMusicPlay.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\RockAutoMusicPlay.exe"; Description: "启动 ROCK 九键音乐工作台"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\RockAutoMusicPlay.exe"; Description: "启动 ROCK / 洛克手碟演奏器"; Flags: nowait postinstall skipifsilent unchecked
 Filename: "https://github.com/oblitum/Interception/releases/download/v1.0.1/Interception.zip"; Description: "在浏览器中下载 Interception 驱动（需另行管理员安装并重启）"; Flags: shellexec postinstall skipifsilent unchecked; Check: OfferDriverDownload
 
 ; No recursive UninstallDelete entries: remove only the files installed here.

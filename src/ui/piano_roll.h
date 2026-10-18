@@ -36,6 +36,9 @@ signals:
     void editStarted();
     void notesEdited(const std::vector<rock::MappedNote>& notes);
     void deleteRequested();
+    void copyRequested();
+    void cutRequested();
+    void pasteRequested();
     void addRequested(double start, int target);
     void addModeChanged(bool enabled);
     void rangeEdited(double first,double last);

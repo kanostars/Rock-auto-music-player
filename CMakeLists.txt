@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(RockAutoMusicPlay VERSION 1.2.3 LANGUAGES C CXX)
+project(RockAutoMusicPlay VERSION 1.2.6 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -33,12 +33,21 @@ add_library(rock_audio src/audio/handpan_mixer.cpp src/audio/audio_player.cpp sr
 set_target_properties(rock_audio PROPERTIES AUTOMOC OFF AUTORCC ON)
 target_link_libraries(rock_audio PUBLIC rock_core Qt6::Core PRIVATE miniaudio)
 add_library(rock_ui src/ui/main_window.cpp src/ui/main_window.h
+    src/ui/main_window_guide.cpp
+    src/ui/help_guide.cpp src/ui/help_guide.h
+    src/ui/guide_overlay.cpp src/ui/guide_overlay.h
     src/app/preferences.cpp src/app/preferences.h
     src/app/app_log.cpp src/app/app_log.h
     src/app/project.cpp src/app/project.h
     src/app/export_paths.cpp src/app/export_paths.h
     src/ui/project_export_dialog.cpp src/ui/project_export_dialog.h
-    src/ui/theme.cpp src/ui/settings_page.cpp src/ui/settings_page.h
+    src/ui/theme.cpp src/ui/theme_image.cpp src/ui/theme_image.h
+    src/ui/appearance_settings.cpp src/ui/appearance_settings.h
+    src/ui/wallpaper_store.cpp src/ui/wallpaper_store.h
+    src/ui/wallpaper_layer.cpp src/ui/wallpaper_layer.h
+    src/ui/wallpaper_library.cpp src/ui/wallpaper_library.h
+    src/ui/settings_page.cpp src/ui/settings_page.h
+    src/ui/about_dialog.cpp src/ui/about_dialog.h
     src/ui/log_dialog.cpp src/ui/log_dialog.h
     src/ui/practice_page.cpp src/ui/practice_page.h
     src/ui/practice_mini.cpp src/ui/practice_mini.h
@@ -61,7 +70,7 @@ if(WIN32)
     set_target_properties(interception PROPERTIES AUTOMOC OFF PREFIX "")
     target_include_directories(rock_ui PRIVATE third_party/interception)
     add_dependencies(rock_ui interception)
-    target_link_libraries(rock_ui PRIVATE setupapi cfgmgr32 user32 dwmapi)
+    target_link_libraries(rock_ui PRIVATE setupapi cfgmgr32 user32 dwmapi mfreadwrite mfplat mfuuid ole32)
 endif()
 add_executable(RockAutoMusicPlay WIN32 main.cpp assets/icons/app.qrc)
 set_target_properties(RockAutoMusicPlay PROPERTIES AUTORCC ON)

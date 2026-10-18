@@ -1,9 +1,12 @@
 #include "piano_roll.h"
 #include "theme.h"
+#include "track_color.h"
 #include "app/preferences.h"
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QMenu>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QPainter>
 #include <QScrollBar>
 #include <QToolTip>
@@ -37,6 +40,8 @@ double barTick(const Song& song,const Settings& settings,double seconds){
 PianoRoll::PianoRoll(QWidget* parent):QAbstractScrollArea(parent) {
     std::copy(keys.begin(),keys.end(),practiceKeys_.begin());
     setObjectName("pianoRoll"); setFrameShape(QFrame::NoFrame);
+    // Keep only the ruler, pitch gutter, note grid and its scrollbars opaque.
+    setProperty("opaqueWorkspace",true);
     setMouseTracking(true); viewport()->setMouseTracking(true);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -199,9 +204,17 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     auto drawNote=[&](const MappedNote& n) {
         auto rect=noteRect(n);
         if(rect.right()<gutter_||rect.left()>w) return;
-        QColor color=practiceMode_?Theme::color("#189e91"):n.mapping==Mapping::Edited?Theme::color("#6582bd"):n.mapping==Mapping::Exact?Theme::color("#189e91"):n.mapping==Mapping::Approximate?Theme::color("#d5a14a"):Theme::color("#b7c1cb");
-        if(n.conflict&&!practiceMode_)color=Theme::color("#d4656d");
-        p.setBrush(color);p.setPen(selection_.contains(n.source)?QPen(Theme::color("#142e3e"),2):Qt::NoPen);
+        const bool skipped=n.target<0||n.mapping==Mapping::Skipped||n.mapping==Mapping::ConflictSkipped;
+        QColor color=practiceMode_?Theme::color("#189e91"):skipped?Theme::color("#b7c1cb"):trackColor(song_->notes[n.source].track);
+        // Selection brightens the fill; its outline remains reserved for mapping status.
+        if(selection_.contains(n.source))color=color.lighter(115);
+        QPen border(Qt::NoPen);
+        if(!practiceMode_&&!skipped){
+            if(n.conflict)border=QPen(QColor("#ed4545"),2.5);
+            else if(n.mapping==Mapping::Edited)border=QPen(QColor("#355ee8"),2.5);
+            else if(n.mapping==Mapping::Approximate)border=QPen(QColor("#f2c94c"),2.5);
+        }
+        p.setBrush(color);p.setPen(border);
         p.drawRoundedRect(rect,4,4);
         if(rect.width()>19) {
             p.setPen(Qt::white);p.setFont(QFont("Segoe UI",9,QFont::DemiBold));
@@ -281,6 +294,12 @@ void PianoRoll::paintEvent(QPaintEvent*) {
     }
 }
 bool PianoRoll::event(QEvent* e) {
+    if(e->type()==QEvent::ShortcutOverride&&!practiceMode_){
+        auto* key=static_cast<QKeyEvent*>(e);
+        if(key->matches(QKeySequence::Copy)||key->matches(QKeySequence::Cut)||key->matches(QKeySequence::Paste)){
+            e->accept();return true;
+        }
+    }
     if(e->type()==QEvent::WindowDeactivate||e->type()==QEvent::Hide||
        (e->type()==QEvent::EnabledChange&&!isEnabled()))cancelGesture();
     return QAbstractScrollArea::event(e);
@@ -489,6 +508,17 @@ void PianoRoll::mouseReleaseEvent(QMouseEvent* e) {
 }
 void PianoRoll::keyPressEvent(QKeyEvent* e) {
     if(practiceMode_){QAbstractScrollArea::keyPressEvent(e);return;}
+    const bool copy=e->matches(QKeySequence::Copy),cut=e->matches(QKeySequence::Cut),paste=e->matches(QKeySequence::Paste);
+    if(copy||cut||paste){
+        if(!e->isAutoRepeat()&&result_&&!isEditing()){
+            if(copy&&!selection_.empty())emit copyRequested();
+            else if(editingEnabled_){
+                if(cut&&!selection_.empty())emit cutRequested();
+                else if(paste)emit pasteRequested();
+            }
+        }
+        e->accept();return;
+    }
     const bool left=matchesShortcut(ShortcutAction::RangeLeftToPlayhead,e),right=matchesShortcut(ShortcutAction::RangeRightToPlayhead,e);
     if(left||right){
         if(!e->isAutoRepeat()&&result_&&result_->duration>0&&rangeEnd_>=0&&!isEditing())emit rangeBoundaryToPlayheadRequested(left,playhead_);
@@ -535,9 +565,21 @@ void PianoRoll::setEditingEnabled(bool enabled) {
 }
 void PianoRoll::contextMenuEvent(QContextMenuEvent* e) {
     if(practiceMode_||!editingEnabled_){e->accept();return;}
-    int id=hit(viewport()->mapFromGlobal(e->globalPos()));if(id<0)return;
-    cancelGesture();if(!selection_.contains(id))selection_={id};selected_=id;notifySelection();emit editStarted();
-    QMenu menu(this);auto* remove=menu.addAction(QString("删除选中 %1 个音符\t%2").arg(selection_.size()).arg(Preferences::instance().shortcutText(ShortcutAction::DeleteNotes)));
-    if(menu.exec(e->globalPos())==remove)emit deleteRequested();
+    int id=hit(viewport()->mapFromGlobal(e->globalPos()));
+    cancelGesture();
+    if(id>=0){if(!selection_.contains(id))selection_={id};selected_=id;notifySelection();}
+    emit editStarted();
+    QMenu menu(this);
+    auto* copy=menu.addAction("复制音符\tCtrl+C");copy->setEnabled(!selection_.empty());
+    auto* cut=menu.addAction("剪切音符\tCtrl+X");cut->setEnabled(!selection_.empty());
+    auto* paste=menu.addAction("粘贴到游标\tCtrl+V");paste->setEnabled(result_!=nullptr);
+    menu.addSeparator();
+    auto* remove=menu.addAction(QString("删除选中 %1 个音符\t%2").arg(selection_.size()).arg(Preferences::instance().shortcutText(ShortcutAction::DeleteNotes)));
+    remove->setEnabled(!selection_.empty());
+    auto* chosen=menu.exec(e->globalPos());
+    if(chosen==copy)emit copyRequested();
+    else if(chosen==cut)emit cutRequested();
+    else if(chosen==paste)emit pasteRequested();
+    else if(chosen==remove)emit deleteRequested();
 }
 }

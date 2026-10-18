@@ -50,7 +50,8 @@ PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
         status=text("尚未查找，请点击"+refreshText,"muted");status->setObjectName(statusName);status->setWordWrap(true);layout->addWidget(status);
         connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,combo,status,name](int index){
             combo->setToolTip(index>=0?combo->itemData(index,Qt::ToolTipRole).toString():QString());
-            if(index>=0){status->setText("已选择"+name);Theme::setStyle(status,"color:#178e80;");}if(start_)updateControls();
+            if(index>=0){status->setText("已选择"+name);Theme::setStyle(status,"color:#16865a;");}if(start_)updateControls();
+            if(index>=0&&guidedOutput_)QTimer::singleShot(0,this,[this]{if(guidedOutput_&&isVisible()&&!running_&&!libraryBusy_&&!driverInspectionActive_)ensureOutputReady();});
         });
     };
     addSelector("输出键盘","performanceKeyboard","refreshKeyboardsButton","keyboardDiscoveryStatus","刷新键盘",keyboards_,refreshKeyboards_,keyboardStatus_);
@@ -62,6 +63,8 @@ PerformancePanel::PerformancePanel(QWidget* parent):QWidget(parent){
     auto* form=new QFormLayout;countdown_=new QSpinBox;countdown_->setObjectName("performanceCountdown");
     countdown_->setRange(1,std::numeric_limits<int>::max());countdown_->setValue(5);countdown_->setSuffix(" 秒");countdown_->setButtonSymbols(QAbstractSpinBox::NoButtons);form->addRow("开始倒计时",countdown_);layout->addLayout(form);
     activate_=new QCheckBox("立即打开目标窗口");activate_->setObjectName("activatePerformanceWindow");activate_->setChecked(true);layout->addWidget(activate_);
+    connect(countdown_,qOverload<int>(&QSpinBox::valueChanged),this,&PerformancePanel::projectOptionsChanged);
+    connect(activate_,&QCheckBox::toggled,this,&PerformancePanel::projectOptionsChanged);
     state_=text("请刷新并选择输出键盘和目标窗口。","muted");state_->setObjectName("performanceState");state_->setWordWrap(true);layout->addWidget(state_);
     layout->addStretch();shortcutHint_=text({},"muted");shortcutHint_->setWordWrap(true);layout->addWidget(shortcutHint_);
     auto updateHint=[this]{auto& p=Preferences::instance();shortcutHint_->setText(p.shortcutText(ShortcutAction::PerformancePause)+" 暂停 / 继续 · "+p.shortcutText(ShortcutAction::PerformanceStop)+" 终止\n"+p.shortcutText(ShortcutAction::PerformancePrevious)+" 上一首 · "+p.shortcutText(ShortcutAction::PerformanceNext)+" 下一首\n"+p.shortcutText(ShortcutAction::MiniMode)+" 主窗口 / 小窗切换\n目标窗口离开前台时暂停。自动演奏期间锁定音符编辑，终止后恢复。\n测试按键已移至顶部的设置页面。");};
@@ -97,11 +100,46 @@ void PerformancePanel::updatePlayMode(){
     playMode_->setIcon(playlistIcon(icons[playModeIndex_]));playMode_->setAccessibleName(names[playModeIndex_]);
     playMode_->setToolTip(names[playModeIndex_]+" · 试听与自动演奏共用\n点击切换为"+names[(playModeIndex_+1)%4]);
 }
-void PerformancePanel::cyclePlayMode(){if(libraryBusy_||(running_&&controller_.snapshot().state!=PerformanceState::Paused))return;playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();}
+void PerformancePanel::cyclePlayMode(){if(libraryBusy_||(running_&&controller_.snapshot().state!=PerformanceState::Paused))return;playModeIndex_=(playModeIndex_+1)%4;updatePlayMode();resetQueue();emit projectOptionsChanged();}
 int PerformancePanel::countdown() const{return countdown_->value();}
 bool PerformancePanel::activatesTarget() const{return activate_->isChecked();}
 void PerformancePanel::setStartOptions(int countdown,bool activateTarget){if(running_)return;countdown_->setValue(countdown);activate_->setChecked(activateTarget);}
 bool PerformancePanel::outputReady() const{return keyboards_->currentIndex()>=0&&windows_->currentIndex()>=0;}
+bool PerformancePanel::ensureOutputReady(){
+    if(running_)return true;
+    QString unavailable;
+    if(libraryBusy_)unavailable="正在导入或处理曲目，请稍后开始演奏。";
+    else if(driverInspectionActive_)unavailable="正在检测 Interception 驱动，请稍后开始演奏。";
+    else if(!song_||!result_)unavailable="请先导入并选择 MIDI 曲目。";
+    if(!unavailable.isEmpty()){
+        outputBlockedHint_=libraryBusy_||driverInspectionActive_?unavailable:QString();
+        guidedOutput_=0;state_->setText(unavailable);Theme::setStyle(state_,"color:#a77722;");emit statusChanged(unavailable);return false;
+    }
+    if(outputReady()){
+        if(guidedOutput_){state_->setText("输出已就绪，点击开始演奏。");Theme::setStyle(state_,"color:#16865a;");emit statusChanged(state_->text());}
+        guidedOutput_=0;return true;
+    }
+    const bool keyboard=keyboards_->currentIndex()<0;
+    guidedOutput_=keyboard?1:2;
+    const bool attempted=keyboard?keyboardDiscoveryAttempted_:windowDiscoveryAttempted_;
+    if(!attempted&&(keyboard?keyboards_:windows_)->count()==0)refreshDevices(keyboard);
+    focusOutputSelection(keyboard);return false;
+}
+void PerformancePanel::focusOutputSelection(bool keyboard){
+    auto* combo=keyboard?keyboards_:windows_;auto* refresh=keyboard?refreshKeyboards_:refreshWindows_;
+    auto* status=keyboard?keyboardStatus_:windowStatus_;
+    const bool searching=(keyboard?keyboardWatcher_:windowWatcher_).isRunning();
+    const QString name=keyboard?"输出键盘":"目标窗口";
+    QString message;
+    if(searching)message="正在查找"+name+"，完成后请手动选择。";
+    else if(combo->count()>0)message="请选择"+name+"。";
+    else message=keyboard?"未找到可用输出键盘，请检查连接及 Interception 驱动，再点击刷新键盘。":"未找到可用目标窗口，请打开游戏，再点击刷新窗口。";
+    state_->setText(message);Theme::setStyle(state_,"color:#bd4f5b;");
+    emit outputSelectionRequested(combo,message);emit statusChanged(message);
+    if(combo->isEnabled())combo->setFocus(Qt::OtherFocusReason);
+    else if(refresh->isEnabled())refresh->setFocus(Qt::OtherFocusReason);
+    else {status->setFocusPolicy(Qt::StrongFocus);status->setFocus(Qt::OtherFocusReason);}
+}
 QString PerformancePanel::statusText() const{return state_->text();}
 void PerformancePanel::setLibrary(QListWidget* library){
     library_=library;
@@ -176,6 +214,7 @@ void PerformancePanel::setPreviewPosition(double seconds){
 void PerformancePanel::refreshDevices(bool keyboard) {
     if(running_||(keyboard&&driverInspectionActive_))return;
     auto& watcher=keyboard?keyboardWatcher_:windowWatcher_;if(watcher.isRunning())return;
+    (keyboard?keyboardDiscoveryAttempted_:windowDiscoveryAttempted_)=true;
     AppLog::instance().write(LogLevel::Info,"设备",keyboard?"开始查找输出键盘。":"开始查找目标窗口。");
     auto* combo=keyboard?keyboards_:windows_;auto* refresh=keyboard?refreshKeyboards_:refreshWindows_;
     auto* status=keyboard?keyboardStatus_:windowStatus_;
@@ -209,18 +248,40 @@ void PerformancePanel::discoveryFinished(bool keyboard) {
     } else if(combo->count()==0) {
         status->setText(keyboard?"未找到键盘，请检查连接后重试。":"未找到窗口，请打开目标程序后重试。");Theme::setStyle(status,"color:#a77722;");
     } else {
-        combo->setEnabled(true);status->setText(QString("找到 %1 个%2，请手动选择。").arg(combo->count()).arg(keyboard?"键盘":"窗口"));Theme::setStyle(status,"color:#178e80;");
+        combo->setEnabled(true);status->setText(QString("找到 %1 个%2，请手动选择。").arg(combo->count()).arg(keyboard?"键盘":"窗口"));Theme::setStyle(status,"color:#16865a;");
     }
     updateControls();
     if(keyboard)emit keyboardDiscoveryActiveChanged(false);
+    if(guidedOutput_==(keyboard?1:2)){
+        if(isVisible()&&!libraryBusy_&&!driverInspectionActive_)focusOutputSelection(keyboard);
+        else guidedOutput_=0;
+    }
 }
 PerformancePanel::~PerformancePanel(){controller_.stop();}
 void PerformancePanel::stopPerformance(){if(!switchingSong_){queueActive_=false;resetQueue();}controller_.stop();if(timer_)updatePerformance();}
 void PerformancePanel::updateControls(){
-    const bool available=song_&&result_&&keyboards_->currentIndex()>=0&&windows_->currentIndex()>=0;
-    start_->setEnabled(running_||(available&&!driverInspectionActive_));
+    const bool available=song_&&result_;
+    const bool ready=available&&outputReady();
+    if(!outputBlockedHint_.isEmpty()&&!libraryBusy_&&!driverInspectionActive_){
+        const bool showingBlockedHint=state_->text()==outputBlockedHint_;
+        outputBlockedHint_.clear();
+        if(showingBlockedHint&&available&&!running_){
+            state_->setText(ready?"输出已就绪，点击开始演奏。":"请先选择输出键盘和目标窗口。");
+            Theme::setStyle(state_,ready?"color:#16865a;":"color:#bd4f5b;");emit statusChanged(state_->text());
+        }
+    }
+    start_->setEnabled(!libraryBusy_&&(running_||(available&&!driverInspectionActive_)));
+    const int visualState=ready||running_?1:0;
+    if(startVisualState_!=visualState){
+        startVisualState_=visualState;
+        Theme::setStyle(start_,visualState?
+            "QPushButton {background:#16865a;border-color:#16865a;color:white;} QPushButton:hover {background:#126b48;} QPushButton:disabled {background:#f5f7f8;border-color:#e6edf0;color:#afbdc5;}":
+            "QPushButton {background:#fbebed;border-color:#cf7580;color:#b64957;} QPushButton:hover {border-color:#b64957;} QPushButton:disabled {background:#fbebed;border-color:#cf7580;color:#b64957;}");
+    }
+    const QString startHint=libraryBusy_?"正在处理曲目，请稍后。":driverInspectionActive_?"正在检测 Interception 驱动，请稍后。":!available?"请先导入 MIDI 曲目。":running_?"暂停 / 继续演奏":ready?"输出已就绪，开始自动演奏。":"点击前往选择输出键盘和目标窗口。";
+    if(start_->toolTip()!=startHint)start_->setToolTip(startHint);
     refreshKeyboards_->setEnabled(!running_&&!driverInspectionActive_&&!keyboardWatcher_.isRunning());refreshWindows_->setEnabled(!running_&&!windowWatcher_.isRunning());
-    keyboards_->setEnabled(!running_&&keyboards_->count()>0);windows_->setEnabled(!running_&&windows_->count()>0);
+    keyboards_->setEnabled(!running_&&!driverInspectionActive_&&!keyboardWatcher_.isRunning()&&keyboards_->count()>0);windows_->setEnabled(!running_&&!windowWatcher_.isRunning()&&windows_->count()>0);
     activate_->setEnabled(!running_);
     countdown_->setEnabled(!running_);
     playMode_->setEnabled(canChangePlayMode());if(library_)library_->setEnabled(!libraryBusy_);
@@ -228,7 +289,6 @@ void PerformancePanel::updateControls(){
     const bool selected=!libraryBusy_&&row>=0&&row<count;
     previousSong_->setEnabled(selected&&count>1);nextSong_->setEnabled(selected&&count>1);
     removeSong_->setEnabled(selected);moveUp_->setEnabled(selected&&row>0);moveDown_->setEnabled(selected&&row+1<count);
-    if(libraryBusy_)start_->setEnabled(false);
 }
 void PerformancePanel::updatePerformance(){
     const auto s=controller_.snapshot();
@@ -243,7 +303,7 @@ void PerformancePanel::updatePerformance(){
     snapshot_=s;const bool wasRunning=running_;running_=s.active();
     if(wasRunning||running_)setPreviewPosition(s.position);
     if(!s.message.isEmpty())state_->setText(s.state==PerformanceState::Countdown?QString("倒计时 %1 秒 · %2").arg(static_cast<int>(std::ceil(s.countdown))).arg(s.message):s.message);
-    Theme::setStyle(state_,s.state==PerformanceState::Failed?"color:#bd4f5b;":"color:#178e80;");
+    Theme::setStyle(state_,s.state==PerformanceState::Failed?"color:#bd4f5b;":"color:#16865a;");
     start_->setText(s.state==PerformanceState::Paused?"继续演奏":running_?"暂停演奏":"开始演奏");
     updateControls();if(!running_)timer_->stop();
     if(wasRunning!=running_)emit activeChanged(running_);
@@ -255,9 +315,7 @@ void PerformancePanel::updatePerformance(){
 }
 void PerformancePanel::startPerformance(){
     if(running_){controller_.togglePause();updatePerformance();return;}
-    if(driverInspectionActive_){
-        state_->setText("正在检测 Interception 驱动，请稍后开始演奏。");Theme::setStyle(state_,"color:#a77722;");emit statusChanged(state_->text());return;
-    }
+    if(!ensureOutputReady())return;
     resetQueue();queueActive_=true;
     if(result_&&(position_<rangeStart_||position_>=(rangeEnd_<0?result_->duration:rangeEnd_)))setPreviewPosition(rangeStart_);
     beginSong();

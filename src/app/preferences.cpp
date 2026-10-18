@@ -2,8 +2,18 @@
 #include "platform/global_shortcut.h"
 #include <QKeyEvent>
 #include <QSettings>
+#include <QGuiApplication>
+#include <QStyleHints>
 
 namespace rock {
+namespace {
+QString normalizedThemeId(const QString& id){
+    for(const auto* known:{"deep-teal","midnight-blue","aurora-purple","sunrise-orange","rose-pink","moss-green","ember-red","gilded-gold","high-contrast","workstation","classic-light","custom"})
+        if(id==QLatin1String(known))return id;
+    return "deep-teal";
+}
+QString modeName(InterfaceMode mode){return mode==InterfaceMode::Dark?"dark":mode==InterfaceMode::System?"system":"light";}
+}
     const std::array<ShortcutDefinition, shortcutCount> &shortcutDefinitions() {
         static const std::array<ShortcutDefinition, shortcutCount> definitions{
             {
@@ -24,8 +34,9 @@ namespace rock {
                 {ShortcutAction::MiniMode, "miniMode", "主窗口 / 小窗切换", "F12", true},
                 {ShortcutAction::RangeLeftToPlayhead, "rangeLeftToPlayhead", "左边界移至播放标", "Alt+[", false},
                 {ShortcutAction::RangeRightToPlayhead, "rangeRightToPlayhead", "右边界移至播放标", "Alt+]", false},
-                {ShortcutAction::ExportMidi, "exportMidi", "导出当前 MIDI", "Ctrl+S", false},
-                {ShortcutAction::ExportProject, "exportProject", "导出工作台工程", "Ctrl+Shift+S", false},
+                {ShortcutAction::ExportMidi, "exportMidi", "导出当前 MIDI", "Ctrl+P", false},
+                {ShortcutAction::SaveProject, "saveProject", "保存当前工程", "Ctrl+S", false},
+                {ShortcutAction::ExportProject, "exportProject", "另存为工程", "Ctrl+Shift+S", false},
                 {ShortcutAction::ImportMidi, "importMidi", "导入 MIDI 文件", "Ctrl+O", false},
                 {ShortcutAction::ImportProject, "importProject", "导入工作台工程", "Ctrl+Shift+O", false}
             }
@@ -68,7 +79,15 @@ namespace rock {
 
     Preferences::Preferences(QObject *parent) : QObject(parent), bindings_(defaultShortcuts()) {
         QSettings settings;
-        dark_ = settings.value("appearance/dark", false).toBool();
+        const auto mode=settings.value("appearance/mode").toString().toLower();
+        interfaceMode_=mode=="system"?InterfaceMode::System:mode=="dark"?InterfaceMode::Dark:
+            mode=="light"?InterfaceMode::Light:settings.value("appearance/dark",false).toBool()?InterfaceMode::Dark:InterfaceMode::Light;
+        themeId_=normalizedThemeId(settings.value("appearance/theme","deep-teal").toString());
+        const QColor savedAccent(settings.value("appearance/customAccent",customAccent_.name()).toString());
+        if(savedAccent.isValid()){customAccent_=savedAccent;customAccent_.setAlpha(255);}
+        dark_=interfaceMode_==InterfaceMode::Dark||(interfaceMode_==InterfaceMode::System&&QGuiApplication::styleHints()->colorScheme()==Qt::ColorScheme::Dark);
+        settings.setValue("appearance/mode",modeName(interfaceMode_));settings.setValue("appearance/theme",themeId_);settings.setValue("appearance/dark",dark_);
+        connect(QGuiApplication::styleHints(),&QStyleHints::colorSchemeChanged,this,[this](Qt::ColorScheme){updateSystemMode();});
         auto saved = bindings_;
         for (const auto &d: shortcutDefinitions()) {
             const auto path = "shortcuts/" + QString::fromUtf8(d.id);
@@ -77,6 +96,19 @@ namespace rock {
                     settings.value(path).toString(), QKeySequence::PortableText);
         }
         const auto original = saved;
+        const bool migrateProjectSave = settings.value("shortcuts/projectSaveDefaultsVersion", 0).toInt() < 1;
+        if (migrateProjectSave) {
+            const auto midiIndex = static_cast<size_t>(ShortcutAction::ExportMidi);
+            if (saved[midiIndex] == QKeySequence("Ctrl+S")) {
+                saved[midiIndex] = bindings_[midiIndex];
+                // A user's existing Ctrl+P binding takes precedence over the new MIDI default.
+                for (size_t other = 0; other < saved.size(); ++other)
+                    if (other != midiIndex && saved[midiIndex] == saved[other]) {
+                        saved[midiIndex] = {};
+                        break;
+                    }
+            }
+        }
         if (settings.value("shortcuts/controlDefaultsVersion", 0).toInt() < 2) {
             for (const auto action: {ShortcutAction::PerformancePause, ShortcutAction::PerformanceStop}) {
                 const auto index = static_cast<size_t>(action);
@@ -88,7 +120,7 @@ namespace rock {
         for (const auto action: {
                  ShortcutAction::PerformancePrevious, ShortcutAction::PerformanceNext, ShortcutAction::MiniMode,
                  ShortcutAction::RangeLeftToPlayhead, ShortcutAction::RangeRightToPlayhead,
-                 ShortcutAction::ExportMidi, ShortcutAction::ExportProject,
+                 ShortcutAction::ExportMidi, ShortcutAction::SaveProject, ShortcutAction::ExportProject,
                  ShortcutAction::ImportMidi, ShortcutAction::ImportProject
              }) {
             const auto index = static_cast<size_t>(action);
@@ -117,6 +149,14 @@ namespace rock {
                         "shortcuts/" + QString::fromUtf8(shortcutDefinitions()[index].id),
                         saved[index].toString(QKeySequence::PortableText));
             }
+            if (migrateProjectSave) {
+                for (const auto action: {ShortcutAction::ExportMidi, ShortcutAction::SaveProject}) {
+                    const auto index = static_cast<size_t>(action);
+                    settings.setValue("shortcuts/" + QString::fromUtf8(shortcutDefinitions()[index].id),
+                                      saved[index].toString(QKeySequence::PortableText));
+                }
+                settings.setValue("shortcuts/projectSaveDefaultsVersion", 1);
+            }
         }
         settings.setValue("shortcuts/controlDefaultsVersion", 2);
     }
@@ -126,11 +166,29 @@ namespace rock {
         return *preferences;
     }
 
-    void Preferences::setDarkTheme(bool dark) {
-        if (dark_ == dark)return;
-        dark_ = dark;
-        QSettings().setValue("appearance/dark", dark);
+    void Preferences::setInterfaceMode(InterfaceMode mode){
+        if(mode!=InterfaceMode::Light&&mode!=InterfaceMode::Dark&&mode!=InterfaceMode::System)mode=InterfaceMode::Light;
+        if(interfaceMode_==mode)return;
+        interfaceMode_=mode;
+        dark_=mode==InterfaceMode::Dark||(mode==InterfaceMode::System&&QGuiApplication::styleHints()->colorScheme()==Qt::ColorScheme::Dark);
+        QSettings settings;settings.setValue("appearance/mode",modeName(mode));settings.setValue("appearance/dark",dark_);
         emit themeChanged();
+    }
+
+    void Preferences::updateSystemMode(){
+        if(interfaceMode_!=InterfaceMode::System)return;
+        const bool dark=QGuiApplication::styleHints()->colorScheme()==Qt::ColorScheme::Dark;
+        if(dark_==dark)return;dark_=dark;QSettings().setValue("appearance/dark",dark_);emit themeChanged();
+    }
+
+    void Preferences::setThemeId(const QString& id){
+        const auto normalized=normalizedThemeId(id);if(themeId_==normalized)return;
+        themeId_=normalized;QSettings().setValue("appearance/theme",themeId_);emit themeChanged();
+    }
+
+    void Preferences::setCustomThemeAccent(const QColor& accent){
+        if(!accent.isValid())return;auto opaque=accent;opaque.setAlpha(255);if(customAccent_==opaque)return;
+        customAccent_=opaque;QSettings().setValue("appearance/customAccent",customAccent_.name());emit themeChanged();
     }
 
     QString Preferences::shortcutText(ShortcutAction action) const {

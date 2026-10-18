@@ -8,3 +8,7 @@ artifacts/
 **/__pycache__/
 tools/audio-extraction/bin/
 tools/audio-extraction/obj/
+.env
+.env.*
+!.env.example
+*.rockproj

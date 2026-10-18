@@ -36,6 +36,8 @@ namespace rock {
 
         bool outputReady() const;
 
+        bool ensureOutputReady();
+
         QString statusText() const;
 
         PerformanceSnapshot snapshot() const { return snapshot_; }
@@ -85,6 +87,10 @@ namespace rock {
 
         void keyboardDiscoveryActiveChanged(bool active);
 
+        void outputSelectionRequested(QWidget *control, const QString &message);
+
+        void projectOptionsChanged();
+
         void statusChanged(const QString &text);
 
         void sourcePositionChanged(double seconds);
@@ -120,6 +126,10 @@ namespace rock {
         QWidget *playlistControls_{}, *transportControls_{};
         bool running_{}, libraryBusy_{}, switchingSong_{}, queueActive_{}, previewPlaying_{};
         bool driverInspectionActive_{};
+        bool keyboardDiscoveryAttempted_{}, windowDiscoveryAttempted_{};
+        int guidedOutput_{}; // 0: none, 1: keyboard, 2: target window.
+        int startVisualState_{-1};
+        QString outputBlockedHint_;
         PerformanceSnapshot snapshot_;
         std::vector<int> randomRemaining_, songHistory_;
         int historyCursor_{-1};
@@ -139,6 +149,8 @@ namespace rock {
         void refreshDevices(bool);
 
         void discoveryFinished(bool);
+
+        void focusOutputSelection(bool keyboard);
 
     };
 }

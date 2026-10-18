@@ -1,4 +1,5 @@
 #include <winver.h>
+#pragma code_page(65001)
 
 1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/assets/icons/app.ico"
 
@@ -16,11 +17,11 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "kanostars\0"
-            VALUE "FileDescription", "RockAutoMusicPlay - Handpan Music Player\0"
+            VALUE "FileDescription", "ROCK / 洛克手碟演奏器\0"
             VALUE "FileVersion", "@PROJECT_VERSION@\0"
             VALUE "InternalName", "RockAutoMusicPlay\0"
             VALUE "OriginalFilename", "RockAutoMusicPlay.exe\0"
-            VALUE "ProductName", "RockAutoMusicPlay\0"
+            VALUE "ProductName", "ROCK / 洛克手碟演奏器\0"
             VALUE "ProductVersion", "@PROJECT_VERSION@\0"
         END
     END

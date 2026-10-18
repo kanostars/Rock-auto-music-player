@@ -12,6 +12,7 @@ class QLabel; class QPushButton; class QComboBox; class QDoubleSpinBox;
 class QSpinBox; class QListWidget; class QTreeWidget; class QTabWidget;
 class QProgressBar; class QSplitter; class QVBoxLayout;
 class QSlider;
+class QHBoxLayout;
 class QShortcut;
 namespace rock {
 class PianoRoll;
@@ -22,12 +23,16 @@ class PracticePage;
 class TimeSeekEdit;
 class LogDialog;
 class GlobalShortcut;
+class HelpGuideDialog;
+class GuideOverlay;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent=nullptr);
     ~MainWindow() override;
     void openFiles(const QStringList& paths);
+    void restoreRecentProject();
+    void showStartupHelp();
     const Conversion* currentResult() const;
 protected:
     bool eventFilter(QObject*,QEvent*) override;
@@ -57,13 +62,22 @@ private:
     bool miniSeekResume_{},miniSeekPerformance_{};std::shared_ptr<Song> miniSeekSong_;
     QTabWidget* tabs_{};
     SettingsPage* appSettings_{};QPushButton* settingsNavigation_{};
-    QPushButton* logsButton_{};QPointer<LogDialog> logWindow_;
+    QPointer<LogDialog> logWindow_;
+    QPushButton* helpGuideButton_{};
+    QPointer<HelpGuideDialog> helpGuideWindow_;
+    QPointer<GuideOverlay> guideOverlay_;
+    QPointer<QWidget> guideCapsule_;
+    QString guideTopicId_;
+    int guideStepIndex_{};
+    bool startupHelpScheduled_{};
+    bool guideHidMain_{};
     QPushButton *headerLogo_{},*practiceBack_{};
     QPushButton* projectMenu_{};
     QString projectPath_;
     ProjectStorage projectStorage_{ProjectStorage::Embedded};
     QByteArray savedProjectFingerprint_;
     bool projectNeedsSave_{},closePromptOpen_{},closeAfterImport_{};
+    QTimer projectCheck_;
     QLabel* libraryCount_{};
     QLabel *headerPageTitle_{},*headerSubtitle_{};
     PracticePage* practicePage_{};QPushButton* practiceButton_{};
@@ -83,6 +97,16 @@ private:
     QTimer timer_; double position_{};
     void buildUi();
     void showAppSettings(bool show);
+    void openLogs();
+    void setupHelpGuide(QHBoxLayout* layout);
+    void openHelpGuide();
+    void updateHelpGuideAvailability();
+    void startHelpGuide(const QString& topic);
+    void showHelpStep(int index);
+    void finishHelpGuide();
+    QWidget* prepareGuideTarget(const QString& target);
+    QWidget* prepareGuideCapsule(const QString& target);
+    void closeGuideCapsule();
     void setPageHeader(const QString& title={},const QString& subtitle={});
     void openPractice();
     void leavePractice();
@@ -110,9 +134,12 @@ private:
     void showNote(int source);
     void showDiagnostics();
     void exportCurrentMidi();
+    void exportMidiFile(bool selectedRegion);
     void importMidiFiles();
     void importFiles(const QStringList& paths);
-    ProjectState captureProject() const;
+    ProjectState captureProject(bool copySongs=true) const;
+    void scheduleProjectCheck();
+    void updateProjectIndicator();
     void restoreProject(ProjectState state);
     void exportWorkbenchProject();
     bool saveWorkbenchProject(bool saveAs);
@@ -132,6 +159,8 @@ private:
     void editNotes(const std::vector<MappedNote>& notes);
     void addNote(double start,int target);
     void deleteNotes();
+    void copyNotes(bool cut=false);
+    void pasteNotes();
     void commitEdits(const NoteEdits& edits);
     void stepHistory(bool redo);
     void updateEditActions();
