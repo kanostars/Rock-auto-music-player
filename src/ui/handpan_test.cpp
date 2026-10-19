@@ -81,6 +81,7 @@ void HandpanBoard::mouseReleaseEvent(QMouseEvent* event) {
     if(event->button()==Qt::LeftButton&&mouseTarget_>=0){int target=mouseTarget_;mouseTarget_=-1;emit padReleased(target);event->accept();}
 }
 HandpanTestDialog::HandpanTestDialog(QWidget* parent):QDialog(parent) {
+    Theme::prepareWindow(this);
     setObjectName("keyTestWindow");setWindowTitle("九键手碟测试");resize(730,700);setMinimumSize(730,700);
     Theme::setStyle(this,"QDialog#keyTestWindow {background:#eef3f5;} QLabel {background:transparent; color:#203d4e; font-family:'Microsoft YaHei UI';}");
     auto* layout=new QVBoxLayout(this);layout->setContentsMargins(18,16,18,14);layout->setSpacing(9);

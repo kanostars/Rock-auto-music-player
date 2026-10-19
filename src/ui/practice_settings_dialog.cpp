@@ -39,6 +39,7 @@ double finiteOr(double value,double fallback){return std::isfinite(value)?value:
 PracticeSettingsDialog::PracticeSettingsDialog(const PracticeOptions& options,double duration,double position,
                                                const std::vector<PracticeGroup>& groups,QWidget* parent):QDialog(parent),
     duration_(std::max(0.0,finiteOr(duration,0))),position_(std::clamp(finiteOr(position,0),0.0,duration_)),groups_(groups){
+    Theme::prepareWindow(this);
     setObjectName("practiceSettingsDialog");setWindowTitle("练习设置与键位");setModal(true);
     resize(640,600);setMinimumSize(580,540);
     Theme::setStyle(this,QString::fromUtf8(R"(

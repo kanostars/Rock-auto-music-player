@@ -11,6 +11,7 @@ Palette palette(const QString& id,bool dark);
 Palette paletteForAccent(const QColor& accent,bool dark);
 QString currentThemeId();
 void initialize();
+void prepareWindow(QWidget* widget);
 QColor color(const QString& light,int alpha=255);
 QString style(const QString& light);
 void setStyle(QWidget* widget,const QString& light);

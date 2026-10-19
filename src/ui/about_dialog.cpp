@@ -53,6 +53,7 @@ QLabel* link(const QString& title,const QString& url,const char* name) {
 }
 
 AboutDialog::AboutDialog(QWidget* parent):QDialog(parent) {
+    Theme::prepareWindow(this);
     setObjectName("aboutSettingsDialog");
     setProperty("settingsDialog",true);
     setWindowTitle("关于 ROCK");

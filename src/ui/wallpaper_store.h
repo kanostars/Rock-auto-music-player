@@ -21,6 +21,10 @@ public:
     const std::vector<WallpaperEntry>& entries() const{return entries_;}
     QString activeId() const{return activeId_;}
     const WallpaperEntry* active() const;
+    bool transparent() const{return activeId_==QStringLiteral("builtin-transparent");}
+    int transparency() const{return transparency_;}
+    void selectTransparent();
+    void setTransparency(int value);
     bool busy() const{return importPending_;}
     void importFiles(const QStringList& paths);
     bool select(const QString& id);
@@ -30,6 +34,7 @@ public:
 signals:
     void changed();
     void activeChanged();
+    void transparencyChanged();
     void importFinished(int added,const QStringList& errors);
     void busyChanged(bool busy);
 private:
@@ -41,6 +46,7 @@ private:
     QString directory_,activeId_;
     QStringList pendingRemovals_;
     int cleanupAttempts_{};
+    int transparency_{65};
     bool importPending_{};
     QFutureWatcher<Batch> watcher_;
     std::shared_ptr<std::atomic_bool> cancelled_;

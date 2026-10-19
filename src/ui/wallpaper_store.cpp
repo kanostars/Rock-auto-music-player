@@ -56,7 +56,8 @@ void WallpaperStore::load(){
         entries_.push_back({id,object["name"].toString().left(512),path,QDir(directory_).filePath(id+".thumb.png"),kind});
         digests_[id]=object["digest"].toString();
     }
-    activeId_=settings.value("wallpaper/activeId").toString();if(!active())activeId_.clear();
+    activeId_=settings.value("wallpaper/activeId").toString();if(!transparent()&&!active())activeId_.clear();
+    transparency_=std::clamp(settings.value("wallpaper/transparency",65).toInt(),0,100);
     for(const auto& file:settings.value("wallpaper/pendingRemovals").toStringList())if(managedFileName(file))pendingRemovals_.push_back(file);
 }
 void WallpaperStore::save() const{
@@ -65,7 +66,7 @@ void WallpaperStore::save() const{
         list.append(QJsonObject{{"id",entry.id},{"name",entry.name},{"extension",QFileInfo(entry.path).suffix().toLower()},
                                 {"digest",digest==digests_.end()?QString():digest->second}});
     }
-    QSettings settings;settings.setValue("wallpaper/library",QJsonDocument(list).toJson(QJsonDocument::Compact));settings.setValue("wallpaper/activeId",activeId_);settings.setValue("wallpaper/pendingRemovals",pendingRemovals_);
+    QSettings settings;settings.setValue("wallpaper/library",QJsonDocument(list).toJson(QJsonDocument::Compact));settings.setValue("wallpaper/activeId",activeId_);settings.setValue("wallpaper/transparency",transparency_);settings.setValue("wallpaper/pendingRemovals",pendingRemovals_);
 }
 void WallpaperStore::cleanupPending(){
     if(pendingRemovals_.isEmpty())return;
@@ -76,6 +77,13 @@ bool WallpaperStore::select(const QString& id){
     const auto found=std::find_if(entries_.begin(),entries_.end(),[&](const auto& entry){return entry.id==id;});
     if(found==entries_.end()||!QFileInfo::exists(found->path))return false;
     if(activeId_==id)return true;activeId_=id;save();emit activeChanged();emit changed();return true;
+}
+void WallpaperStore::selectTransparent(){
+    if(transparent())return;activeId_=QStringLiteral("builtin-transparent");save();emit activeChanged();emit changed();
+}
+void WallpaperStore::setTransparency(int value){
+    value=std::clamp(value,0,100);if(transparency_==value)return;transparency_=value;
+    QSettings().setValue("wallpaper/transparency",transparency_);emit transparencyChanged();
 }
 bool WallpaperStore::rename(const QString& id,const QString& name){
     const auto displayName=name.trimmed();if(displayName.isEmpty()||displayName.size()>512)return false;

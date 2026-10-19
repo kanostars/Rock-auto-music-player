@@ -77,6 +77,8 @@ set_target_properties(RockAutoMusicPlay PROPERTIES AUTORCC ON)
 if(WIN32)
     enable_language(RC)
     configure_file(assets/icons/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/app.rc" APPEND PROPERTY
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app.ico")
     target_sources(RockAutoMusicPlay PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 endif()
 target_link_libraries(RockAutoMusicPlay PRIVATE rock_ui)

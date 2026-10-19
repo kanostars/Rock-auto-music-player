@@ -11,6 +11,7 @@ class QLabel;
 class QProgressBar;
 class QPushButton;
 class QScrollArea;
+class QSlider;
 class QWidget;
 namespace rock {
 class WallpaperLibraryDialog final:public QDialog {
@@ -28,6 +29,9 @@ private:
     QProgressBar* progress_{};
     QPushButton* import_{};
     QPushButton* none_{};
+    QWidget* transparencyControls_{};
+    QSlider* transparency_{};
+    QLabel* transparencyValue_{};
     QPointer<QFileDialog> picker_;
     QPointer<QInputDialog> renameWindow_;
     QString renamingId_;

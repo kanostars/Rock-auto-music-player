@@ -143,6 +143,7 @@ private:
 }
 MainWindow::MainWindow(QWidget* parent):QMainWindow(parent) {
     Theme::initialize();
+    Theme::prepareWindow(this);
     setWindowTitle(QString::fromUtf8(appDisplayName));resize(1460,900);setMinimumSize(1120,740);setAcceptDrops(true);
     buildUi();
     centralWidget()->setProperty("wallpaperTint",.28);auto* wallpaper=new WallpaperLayer(centralWidget());wallpaper->setObjectName("mainWallpaperLayer");wallpaper->lower();wallpaper->show();
@@ -651,7 +652,7 @@ void MainWindow::openTrackWindow() {
     if(trackWindow_&&trackWindow_->isVisible()){trackWindow_->raise();trackWindow_->activateWindow();return;}
     if(busy_||roll_->isEditing())return;
     if(!trackWindow_) {
-        trackWindow_=new QWidget(this,Qt::Window);trackWindow_->setObjectName("trackWindow");
+        trackWindow_=new QWidget(this,Qt::Window);trackWindow_->setObjectName("trackWindow");Theme::prepareWindow(trackWindow_);
         trackWindow_->setProperty("wallpaperTint",.28);auto* wallpaper=new WallpaperLayer(trackWindow_);wallpaper->lower();wallpaper->show();
         trackWindow_->setWindowTitle("九键轨道 · 播放与编辑");trackWindow_->setMinimumSize(960,600);trackWindow_->resize(1280,800);
         auto* layout=new QVBoxLayout(trackWindow_);layout->setContentsMargins(16,12,16,12);layout->setSpacing(10);
@@ -1086,7 +1087,7 @@ void MainWindow::showNote(int source) {
 }
 void MainWindow::showDiagnostics() {
     if(current_<0)return;auto& s=sessions_[current_];
-    auto* dialog=new QDialog(roll_->window());dialog->setObjectName("conversionReport");dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle("转换报告");dialog->resize(900,560);
+    auto* dialog=new QDialog(roll_->window());Theme::prepareWindow(dialog);dialog->setObjectName("conversionReport");dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle("转换报告");dialog->resize(900,560);
     Theme::setStyle(dialog,"QDialog#conversionReport {background:#eef3f5;} QDialog#conversionReport QLabel {color:#203d4e;} QTableWidget {background:white; color:#203d4e; alternate-background-color:#f5f9fa; selection-background-color:#d9eeea; selection-color:#203d4e;}");
     auto* layout=new QVBoxLayout(dialog);
     QString warnings;for(const auto& warning:s.song->warnings)warnings+=QString::fromUtf8(warning)+"\n";

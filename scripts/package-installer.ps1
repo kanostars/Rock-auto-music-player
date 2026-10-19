@@ -21,7 +21,7 @@ if (!$IsccPath) {
     if ($compilerCommand) { $IsccPath = $compilerCommand.Source }
 }
 if (!$IsccPath -or !(Test-Path -LiteralPath $IsccPath -PathType Leaf)) {
-    throw 'Provide -IsccPath pointing to the Inno Setup compiler (ISCC.exe, version 6.5 or newer).'
+    throw 'Provide -IsccPath pointing to the Inno Setup compiler (ISCC.exe, version 6.7 or newer).'
 }
 $IsccPath = (Resolve-Path -LiteralPath $IsccPath).Path
 # installer.iss checks the real compiler version via ISPP VER, not EXE metadata.
@@ -66,11 +66,59 @@ foreach ($required in @('interception.dll', 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Wid
     }
 }
 New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
+$artworkSource = Join-Path $projectRoot 'assets/installer/wallpaper.png'
+$appImage = Join-Path $projectRoot 'assets/icons/app.png'
+foreach ($imageFile in @($artworkSource, $appImage)) {
+    if (!(Test-Path -LiteralPath $imageFile -PathType Leaf)) { throw "Missing installer artwork: $imageFile" }
+}
+# Preserve the supplied illustration and prepare a DPI-independent 497:360 wizard canvas.
+# The left-biased crop retains the whole character; the text area fades into warm white.
+Add-Type -AssemblyName System.Drawing
+$artworkDir = Join-Path $releaseRoot 'installer-artwork'
+New-Item -ItemType Directory -Path $artworkDir -Force | Out-Null
+$wizardImage = Join-Path $artworkDir 'wizard-background.png'
+$sourceImage = [System.Drawing.Image]::FromFile($artworkSource)
+$canvas = $null
+$graphics = $null
+$fade = $null
+try {
+    $canvas = [System.Drawing.Bitmap]::new(1491, 1080, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $graphics = [System.Drawing.Graphics]::FromImage($canvas)
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $cropWidth = [Math]::Min($sourceImage.Width, $sourceImage.Height * 1491.0 / 1080.0)
+    $cropHeight = $cropWidth * 1080.0 / 1491.0
+    $sourceRect = [System.Drawing.RectangleF]::new(
+        ($sourceImage.Width - $cropWidth) * 0.4, ($sourceImage.Height - $cropHeight) / 2,
+        $cropWidth, $cropHeight)
+    $canvasRect = [System.Drawing.RectangleF]::new(0, 0, $canvas.Width, $canvas.Height)
+    $graphics.DrawImage($sourceImage, $canvasRect, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)
+    $fade = [System.Drawing.Drawing2D.LinearGradientBrush]::new($canvasRect,
+        [System.Drawing.Color]::Transparent, [System.Drawing.Color]::FromArgb(246, 255, 250, 243),
+        [System.Drawing.Drawing2D.LinearGradientMode]::Horizontal)
+    $blend = [System.Drawing.Drawing2D.ColorBlend]::new(4)
+    $blend.Positions = [single[]]@(0, 0.32, 0.48, 1)
+    $blend.Colors = [System.Drawing.Color[]]@(
+        [System.Drawing.Color]::FromArgb(0, 255, 250, 243),
+        [System.Drawing.Color]::FromArgb(0, 255, 250, 243),
+        [System.Drawing.Color]::FromArgb(246, 255, 250, 243),
+        [System.Drawing.Color]::FromArgb(246, 255, 250, 243))
+    $fade.InterpolationColors = $blend
+    $graphics.FillRectangle($fade, $canvasRect)
+    $canvas.Save($wizardImage, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+    if ($fade) { $fade.Dispose() }
+    if ($graphics) { $graphics.Dispose() }
+    if ($canvas) { $canvas.Dispose() }
+    $sourceImage.Dispose()
+}
 $compilerArguments = @(
     "/DAppVersion=$Version",
     "/DPayloadDir=$PackageDir",
     "/DReleaseDir=$releaseRoot",
     "/DAppIcon=$(Join-Path $projectRoot 'assets/icons/app.ico')",
+    "/DAppImage=$appImage",
+    "/DInstallerBackground=$wizardImage",
     "/DChineseLanguageFile=$LanguageFile",
     (Join-Path $PSScriptRoot 'installer.iss')
 )

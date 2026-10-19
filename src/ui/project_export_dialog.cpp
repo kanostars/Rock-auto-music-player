@@ -12,6 +12,7 @@
 
 namespace rock {
 ProjectExportDialog::ProjectExportDialog(const ProjectState& state,QWidget* parent):QDialog(parent){
+    Theme::prepareWindow(this);
     setObjectName("projectExportDialog");setWindowTitle("导出工作台工程");resize(720,480);setMinimumSize(600,360);
     auto* layout=new QVBoxLayout(this);layout->setContentsMargins(22,20,22,20);layout->setSpacing(14);
     auto* title=new QLabel("保存当前工作台");title->setProperty("role","title");layout->addWidget(title);

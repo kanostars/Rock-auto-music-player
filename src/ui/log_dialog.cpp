@@ -34,6 +34,7 @@ QPushButton* button(const QString& text,const char* name){
 }
 }
 LogDialog::LogDialog(QWidget* parent):QDialog(parent){
+    Theme::prepareWindow(this);
     setObjectName("logDialog");setWindowTitle("全局日志");resize(980,600);setMinimumSize(680,440);
     Theme::setStyle(this,R"(
         QDialog#logDialog {background:#eef3f5;}

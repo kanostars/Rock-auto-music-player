@@ -3,6 +3,7 @@
 #include "wallpaper_layer.h"
 #include "app/preferences.h"
 #include <QApplication>
+#include <QAbstractNativeEventFilter>
 #include <QHash>
 #include <QEvent>
 #include <QLabel>
@@ -27,7 +28,7 @@ namespace rock::Theme {
 namespace {
 void configureScrollWallpaper(QWidget* widget){
     auto* scroll=qobject_cast<QScrollArea*>(widget);if(!scroll)return;
-    const bool enabled=WallpaperStore::instance().active()!=nullptr;
+    const auto& store=WallpaperStore::instance();const bool enabled=store.transparent()||store.active();
     for(auto* surface:{scroll->viewport(),scroll->widget()})if(surface){
         const auto original=surface->property("wallpaperAutoFillBackground");
         if(enabled){if(!original.isValid())surface->setProperty("wallpaperAutoFillBackground",surface->autoFillBackground());surface->setAutoFillBackground(false);}
@@ -35,24 +36,33 @@ void configureScrollWallpaper(QWidget* widget){
     }
 }
 void ensureDialogWallpaper(QWidget* widget){
-    if(!qobject_cast<QDialog*>(widget)||qobject_cast<QFileDialog*>(widget)||qobject_cast<QColorDialog*>(widget)||!WallpaperStore::instance().active())return;
+    const auto& store=WallpaperStore::instance();
+    if(!qobject_cast<QDialog*>(widget)||qobject_cast<QFileDialog*>(widget)||qobject_cast<QColorDialog*>(widget)||(!store.transparent()&&!store.active()))return;
+    if(store.transparent()&&!widget->property("wallpaperWindow").toBool())return;
     if(widget->findChild<WallpaperLayer*>(QString(),Qt::FindDirectChildrenOnly))return;
     widget->setProperty("wallpaperTint",.72);auto* layer=new WallpaperLayer(widget);layer->setObjectName("dialogWallpaperLayer");layer->lower();layer->show();
 }
 QString wallpaperSurfaces(const QString& input){
-    if(!WallpaperStore::instance().active())return input;
+    const auto& store=WallpaperStore::instance();const bool transparent=store.transparent();
+    if(!transparent&&!store.active())return input;
     static const QRegularExpression rules("([^{}]+)\\{([^{}]*)\\}");
     static const QRegularExpression backgrounds("(\\bbackground(?:-color)?\\s*:\\s*)(#[0-9a-fA-F]{6})(?![0-9a-fA-F])",QRegularExpression::CaseInsensitiveOption);
     QString result;qsizetype offset=0;auto matches=rules.globalMatch(input);
     while(matches.hasNext()){
         const auto rule=matches.next();result+=input.mid(offset,rule.capturedStart()-offset);
         for(const auto& selectorPart:rule.captured(1).split(',')){
-            const auto selector=selectorPart.trimmed();auto body=rule.captured(2);
-            const bool opaque=selector.contains("opaqueWorkspace")||selector=="QMainWindow"||selector=="QDialog"||selector=="QWidget#root"||selector=="QWidget#trackWindow"||selector.contains("QAbstractItemView")||selector.contains("QToolTip")||selector.contains("QMenu");
+            auto selector=selectorPart.trimmed();auto body=rule.captured(2);
+            const bool windowSurface=selector=="QMainWindow"||selector=="QDialog"||(selector.startsWith("QDialog#")&&!selector.contains(' ')&&!selector.contains(':'))||selector=="QWidget#root"||selector=="QWidget#trackWindow";
+            if(transparent&&windowSurface&&selector.startsWith("QDialog")){
+                // Native pickers and system prompts keep an opaque background.
+                result+=selector+" {"+body+"}\n";selector+="[wallpaperWindow=true]";
+            }
+            const bool opaque=selector.contains("opaqueWorkspace")||(!transparent&&windowSurface)||selector.contains("QAbstractItemView")||selector.contains("QToolTip")||selector.contains("QMenu");
             if(!opaque){
-                const bool clear=selector.contains("QScrollArea")||selector.contains("QWidget#settingsPage")||selector.contains("QTabWidget::pane");
-                const double opacity=selector.contains("#appSettingsPage")?.66:selector.contains("#header")?.76:selector.contains("#transport")?.78:
-                    (selector.contains("QPushButton")||selector.contains("QLineEdit")||selector.contains("SpinBox")||selector.contains("QComboBox")||selector.contains("QTextEdit")||selector.contains("QPlainTextEdit"))?.90:.70;
+                const bool clear=(transparent&&windowSurface)||selector.contains("QScrollArea")||selector.contains("QWidget#settingsPage")||selector.contains("QTabWidget::pane");
+                const bool control=selector.contains("QPushButton")||selector.contains("QToolButton")||selector.contains("QLineEdit")||selector.contains("SpinBox")||selector.contains("QComboBox")||selector.contains("QTextEdit")||selector.contains("QPlainTextEdit");
+                const double opacity=transparent?std::max(control?.72:0.,1.-store.transparency()/100.):
+                    selector.contains("#appSettingsPage")?.66:selector.contains("#header")?.76:selector.contains("#transport")?.78:control?.90:.70;
                 QString rewritten;qsizetype position=0;auto fills=backgrounds.globalMatch(body);
                 while(fills.hasNext()){
                     const auto fill=fills.next();const QColor color(fill.captured(2));
@@ -184,9 +194,43 @@ void titleTheme(QWidget* widget){
     if(widget->isWindow()&&widget->windowHandle()){BOOL dark=Preferences::instance().darkTheme();DwmSetWindowAttribute(reinterpret_cast<HWND>(widget->winId()),20,&dark,sizeof(dark));}
 #endif
 }
-class ThemeEvents:public QObject {
+void windowTransparency(QWidget* widget){
+#ifdef Q_OS_WIN
+    if(!widget->property("wallpaperWindow").toBool()||!widget->internalWinId()||!widget->isWindow())return;
+    const bool enabled=WallpaperStore::instance().transparent();
+    const auto applied=widget->property("wallpaperNativeTransparency");if(applied.isValid()&&applied.toBool()==enabled)return;
+    // Let DWM composite the raster backing store's per-pixel alpha while
+    // retaining the native title bar and resize frame. Never fade the window:
+    // text and the note grid must keep their original opacity.
+    DWM_BLURBEHIND effect{};effect.dwFlags=DWM_BB_ENABLE;effect.fEnable=enabled;
+    if(enabled){effect.dwFlags|=DWM_BB_BLURREGION;effect.hRgnBlur=CreateRectRgn(0,0,-1,-1);}
+    const auto result=DwmEnableBlurBehindWindow(reinterpret_cast<HWND>(widget->internalWinId()),&effect);
+    if(effect.hRgnBlur)DeleteObject(effect.hRgnBlur);
+    if(SUCCEEDED(result))widget->setProperty("wallpaperNativeTransparency",enabled);
+#else
+    Q_UNUSED(widget);
+#endif
+}
+class ThemeEvents:public QObject,public QAbstractNativeEventFilter {
 public:using QObject::QObject;
-protected:bool eventFilter(QObject* object,QEvent* event) override{if(event->type()==QEvent::Show)if(auto* widget=qobject_cast<QWidget*>(object)){titleTheme(widget);ensureDialogWallpaper(widget);configureScrollWallpaper(widget);}return false;}
+    bool nativeEventFilter(const QByteArray&,void* message,qintptr*) override{
+#ifdef Q_OS_WIN
+        const auto* native=static_cast<MSG*>(message);
+        if(native->message==WM_DWMCOMPOSITIONCHANGED)if(auto* widget=QWidget::find(reinterpret_cast<WId>(native->hwnd))){
+            widget->setProperty("wallpaperNativeTransparency",QVariant());windowTransparency(widget);
+        }
+#else
+        Q_UNUSED(message);
+#endif
+        return false;
+    }
+protected:bool eventFilter(QObject* object,QEvent* event) override{
+    if(auto* widget=qobject_cast<QWidget*>(object)){
+        if(event->type()==QEvent::Show){titleTheme(widget);windowTransparency(widget);ensureDialogWallpaper(widget);configureScrollWallpaper(widget);}
+        else if(event->type()==QEvent::WinIdChange){widget->setProperty("wallpaperNativeTransparency",QVariant());windowTransparency(widget);}
+    }
+    return false;
+}
 };
 void apply(){
     static bool applying=false;if(applying||!qApp)return;const QScopedValueRollback<bool> guard(applying,true);
@@ -201,7 +245,7 @@ void apply(){
         configureScrollWallpaper(widget);
         if(widget->property("themeSourceStyle").isValid())widget->setStyleSheet(style(widget->property("themeSourceStyle").toString()));
         if(auto* label=qobject_cast<QLabel*>(widget))if(label->property("themeSourceText").isValid())label->setText(style(label->property("themeSourceText").toString()));
-        titleTheme(widget);widget->update();
+        titleTheme(widget);windowTransparency(widget);widget->update();
     }
 }
 }
@@ -278,5 +322,11 @@ QString style(const QString& light){
 void setStyle(QWidget* widget,const QString& light){if(widget->property("themeSourceStyle").toString()!=light)widget->setProperty("themeSourceStyle",light);const auto applied=style(light);if(widget->styleSheet()!=applied)widget->setStyleSheet(applied);}
 QString sourceStyle(const QWidget* widget){const auto source=widget->property("themeSourceStyle");return source.isValid()?source.toString():widget->styleSheet();}
 void setRichText(QLabel* label,const QString& light){label->setProperty("themeSourceText",light);label->setText(style(light));}
-void initialize(){static bool initialized=false;if(initialized)return;initialized=true;QObject::connect(&Preferences::instance(),&Preferences::themeChanged,qApp,[]{apply();});QObject::connect(&WallpaperStore::instance(),&WallpaperStore::activeChanged,qApp,[]{apply();});qApp->installEventFilter(new ThemeEvents(qApp));apply();}
+void prepareWindow(QWidget* widget){
+    if(!widget||!widget->isWindow()||qobject_cast<QFileDialog*>(widget)||qobject_cast<QColorDialog*>(widget))return;
+    // Allocate an alpha backing store before the native handle is created.
+    // Keep it for all wallpapers so switching never recreates a visible window.
+    widget->setAttribute(Qt::WA_TranslucentBackground);widget->setProperty("wallpaperWindow",true);
+}
+void initialize(){static bool initialized=false;if(initialized)return;initialized=true;QObject::connect(&Preferences::instance(),&Preferences::themeChanged,qApp,[]{apply();});QObject::connect(&WallpaperStore::instance(),&WallpaperStore::activeChanged,qApp,[]{apply();});QObject::connect(&WallpaperStore::instance(),&WallpaperStore::transparencyChanged,qApp,[]{if(WallpaperStore::instance().transparent())apply();});auto* events=new ThemeEvents(qApp);qApp->installEventFilter(events);qApp->installNativeEventFilter(events);apply();}
 }

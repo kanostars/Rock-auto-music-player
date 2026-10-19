@@ -436,6 +436,7 @@ WallpaperLayer::WallpaperLayer(QWidget* parent):QWidget(parent),playback_(Wallpa
     setFocusPolicy(Qt::NoFocus);
     if(parent){setGeometry(parent->rect());parent->installEventFilter(this);}
     if(window()!=parent&&window())window()->installEventFilter(this);
+    connect(&WallpaperStore::instance(),&WallpaperStore::transparencyChanged,this,qOverload<>(&WallpaperLayer::update));
     lower();playback_->attach(this);
 }
 
@@ -444,6 +445,12 @@ WallpaperLayer::~WallpaperLayer(){playback_->detach(this);}
 void WallpaperLayer::syncPlayback(){playback_->syncPlayback();}
 
 void WallpaperLayer::paintEvent(QPaintEvent*) {
+    const auto& store=WallpaperStore::instance();
+    if(store.transparent()){
+        QPainter painter(this);auto veil=Theme::color("#eef3f5");
+        // One alpha unit keeps fully transparent empty areas interactive.
+        veil.setAlpha(std::max(1,qRound(255*(1.-store.transparency()/100.))));painter.fillRect(rect(),veil);return;
+    }
     if(frame_.isNull()||width()<=0||height()<=0)return;
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);

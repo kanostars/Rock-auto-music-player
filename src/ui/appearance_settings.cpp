@@ -34,6 +34,7 @@ QLabel* label(const QString& value,const char* role=nullptr){
 void configureWindow(QDialog* window,const char* name,const QString& title,int width,int height,int minWidth,int minHeight){
     window->setObjectName(name);window->setProperty("settingsDialog",true);window->setWindowTitle(title);
     window->setWindowFlag(Qt::WindowContextHelpButtonHint,false);window->setModal(false);
+    Theme::prepareWindow(window);
     window->setMinimumSize(minWidth,minHeight);
     if(auto* display=window->screen()){
         const auto available=display->availableGeometry();width=std::min(width,std::max(minWidth,available.width()-48));height=std::min(height,std::max(minHeight,available.height()-80));
@@ -149,8 +150,8 @@ AppearanceSettingsDialog::AppearanceSettingsDialog(QWidget* parent):QDialog(pare
     for(const auto& preset:Theme::presets())preset_->addItem(preset.name,preset.id);preset_->addItem("自定义配色","custom");themeRow->addWidget(preset_);
     auto* library=new QPushButton("主题库");library->setObjectName("openThemeLibraryButton");library->setAutoDefault(false);library->setMinimumWidth(94);themeRow->addWidget(library);rows->addLayout(themeRow);rows->addSpacing(12);
     auto* wallpaperDivider=new QFrame;wallpaperDivider->setFrameShape(QFrame::HLine);Theme::setStyle(wallpaperDivider,"color:#e0e9ed;");rows->addWidget(wallpaperDivider);rows->addSpacing(12);
-    auto* wallpaperRow=new QHBoxLayout;auto* wallpaperWords=new QVBoxLayout;wallpaperWords->setSpacing(5);wallpaperWords->addWidget(label("界面壁纸","section"));wallpaperWords->addWidget(label("静态图片 · GIF 动图 · 静音视频","muted"));wallpaperRow->addLayout(wallpaperWords,1);
-    auto* wallpaper=new QPushButton("导入壁纸");wallpaper->setObjectName("openWallpaperLibraryButton");wallpaper->setAccessibleName("导入壁纸，打开壁纸库");wallpaper->setAutoDefault(false);wallpaper->setMinimumWidth(175);wallpaperRow->addWidget(wallpaper);rows->addLayout(wallpaperRow);rows->addSpacing(8);outer->addStretch();
+    auto* wallpaperRow=new QHBoxLayout;auto* wallpaperWords=new QVBoxLayout;wallpaperWords->setSpacing(5);wallpaperWords->addWidget(label("界面壁纸","section"));wallpaperWords->addWidget(label("透明背景 · 图片 · GIF · 静音视频","muted"));wallpaperRow->addLayout(wallpaperWords,1);
+    auto* wallpaper=new QPushButton("壁纸库");wallpaper->setObjectName("openWallpaperLibraryButton");wallpaper->setAccessibleName("打开壁纸库，选择透明背景或导入壁纸");wallpaper->setAutoDefault(false);wallpaper->setMinimumWidth(175);wallpaperRow->addWidget(wallpaper);rows->addLayout(wallpaperRow);rows->addSpacing(8);outer->addStretch();
     auto* footer=new QHBoxLayout;footer->addWidget(label("设置即时生效并自动保存。","muted"),1);addClose(this,footer);outer->addLayout(footer);
     connect(group,&QButtonGroup::idClicked,this,[](int id){Preferences::instance().setInterfaceMode(static_cast<InterfaceMode>(id));});
     connect(preset_,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int index){if(index>=0)Preferences::instance().setThemeId(preset_->itemData(index).toString());});

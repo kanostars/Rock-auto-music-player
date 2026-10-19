@@ -77,7 +77,7 @@ const std::vector<GuideTopic>& guideTopics(){
             {"打开外观主题","在设置中心点击“外观主题”，打开独立设置窗口。外观修改即时生效，并自动记住选择。","appearance"},
             {"选择明暗模式","界面模式支持浅色、深色和跟随系统。跟随系统会按系统偏好切换明暗，主题配色仍使用当前选择。","interfaceModes"},
             {"挑选主题与参考图配色","通过“主题库”查看浅色、深色主题预览，点击卡片立即应用。也可导入参考图片提取候选颜色，或调整自定义强调色。","themeLibrary"},
-            {"添加静态或动态壁纸","“导入壁纸”打开壁纸库，可导入图片、GIF 或视频；悬停缩略图可选择、改名或删除。“无壁纸”恢复默认背景，音符网格始终保持不透明。","wallpaperLibrary"}
+            {"设置壁纸与透明背景","“壁纸库”打开独立窗口，可导入图片、GIF 或视频；悬停缩略图可选择、改名或删除。选择“透明背景”可看到窗口后面的内容，并实时调整背景透明度。“无壁纸”恢复默认背景，音符网格始终保持不透明。","wallpaperLibrary"}
         }},
         {"shortcuts","快捷键与手碟测试","按功能区修改快捷键，检查九键发声。",{
             {"认识设置中心","设置中心以应用图标打开各项独立小窗，包括外观主题、快捷键、驱动连接、手碟测试、运行日志和关于本程序。","settingsHome"},
@@ -111,6 +111,7 @@ QPushButton* topicRow(const GuideTopic& topic,int number,QWidget* parent){
 }
 
 HelpGuideDialog::HelpGuideDialog(QWidget* parent):QDialog(parent){
+    Theme::prepareWindow(this);
     setObjectName("helpGuideDialog");setProperty("settingsDialog",true);setWindowTitle("功能帮助");setModal(false);setWindowFlag(Qt::WindowContextHelpButtonHint,false);setMinimumSize(500,420);
     QSize preferred(620,720);if(const auto* display=screen()){const auto available=display->availableGeometry();preferred.setWidth(std::min(preferred.width(),std::max(minimumWidth(),available.width()-48)));preferred.setHeight(std::min(preferred.height(),std::max(minimumHeight(),available.height()-80)));}resize(preferred);
     Theme::setStyle(this,"QDialog#helpGuideDialog {background:#eef3f5;} QScrollArea#helpGuideScroll, QScrollArea#helpGuideScroll > QWidget > QWidget {background:transparent;border:none;}");

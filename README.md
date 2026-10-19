@@ -21,7 +21,7 @@
 - **试听与演奏**：曲目列表、播放顺序、倍速、进度和音量控制；自动演奏支持倒计时、失焦暂停及按键释放。点击 Logo 或按 `F12` 切换置顶播放胶囊，可切歌并调整大小与透明度。
 - **歌曲跟练**：时间轴 / 简谱、自动播放 / 等待按键跟弹、A/B 循环、节拍器和自定义练习键位；简谱可导出 PNG / ZIP。跟练胶囊提供当前按键与单小节简谱，在游戏前台也可使用。
 - **工程与导出**：`.rockproj` 保存曲目、编辑记录、参数、进度及布局，支持内嵌数据或引用 MIDI，启动时恢复最近工程。左键“导出 MIDI”保存整曲，右键仅导出绿色区间；支持复制键谱 / 手弹谱及导出 TXT。编辑不改写原始 MIDI，请保存工程或导出结果。
-- **外观与设置**：浅色 / 深色 / 跟随系统、11 组配色、自定义强调色与参考图取色；壁纸库支持静态图片、GIF、静音循环视频及重命名。面板适度透明，音符网格、时间刻度和音高栏保持不透明。设置中还可管理快捷键、驱动、手碟测试与运行日志。
+- **外观与设置**：浅色 / 深色 / 跟随系统、11 组配色、自定义强调色与参考图取色；壁纸库支持图片、GIF、静音视频及重命名，也可选择透明背景，透视窗口后方并调节透明度。音符网格、时间刻度和音高栏保持不透明。设置中还可管理快捷键、驱动、手碟测试与运行日志。
 
 修改转换参数后需先应用设置；同键过密冲突需调整后才能试听或演奏。简谱以 1/16 网格排版，复杂节奏请结合试听校对。
 
@@ -63,7 +63,7 @@ cmake --build build
 ./scripts/package-installer.ps1 -SkipBuild -IsccPath "<ISCC.exe 路径>"
 ```
 
-发布包位于 `artifacts/releases/`，须保留 EXE 同目录 DLL 与插件。安装版需要 Inno Setup 6.5+ 及 [官方简体中文语言文件](https://github.com/jrsoftware/issrc/blob/main/Files/Languages/ChineseSimplified.isl)，可用 `-LanguageFile` 指定。Qt SDK 与构建产物不提交到源码。
+发布包位于 `artifacts/releases/`，须保留 EXE 同目录 DLL 与插件。安装版需要 Inno Setup 6.7+ 及 [官方简体中文语言文件](https://github.com/jrsoftware/issrc/blob/main/Files/Languages/ChineseSimplified.isl)，可用 `-LanguageFile` 指定。Qt SDK 与构建产物不提交到源码。
 
 ## 范围与许可
 

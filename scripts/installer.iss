@@ -1,6 +1,6 @@
-; Build through package-installer.ps1 with Inno Setup 6.5 or newer.
-#if VER < EncodeVer(6, 5, 0)
-  #error Inno Setup 6.5 or newer is required.
+; Build through package-installer.ps1 with Inno Setup 6.7 or newer.
+#if VER < EncodeVer(6, 7, 0)
+  #error Inno Setup 6.7 or newer is required.
 #endif
 #ifndef AppVersion
   #error AppVersion must be supplied by package-installer.ps1.
@@ -13,6 +13,12 @@
 #endif
 #ifndef AppIcon
   #error AppIcon must be supplied by package-installer.ps1.
+#endif
+#ifndef AppImage
+  #error AppImage must be supplied by package-installer.ps1.
+#endif
+#ifndef InstallerBackground
+  #error InstallerBackground must be supplied by package-installer.ps1.
 #endif
 #ifndef ChineseLanguageFile
   #define ChineseLanguageFile "compiler:Languages\ChineseSimplified.isl"
@@ -29,6 +35,7 @@ AppSupportURL=https://github.com/kanostars/Rock-auto-music-player/issues
 AppUpdatesURL=https://github.com/kanostars/Rock-auto-music-player/releases
 DefaultDirName={localappdata}\Programs\RockAutoMusicPlay
 DefaultGroupName=ROCK 洛克手碟演奏器
+DisableWelcomePage=no
 DisableDirPage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -43,7 +50,10 @@ VersionInfoVersion={#AppVersion}
 VersionInfoProductName=ROCK / 洛克手碟演奏器
 VersionInfoProductVersion={#AppVersion}
 VersionInfoProductTextVersion={#AppVersion}
-WizardStyle=modern
+WizardStyle=modern light windows11 excludelightcontrols hidebevels
+WizardBackColor=#fffaf3
+WizardImageFile=
+WizardSmallImageFile={#AppImage}
 Compression=lzma2
 SolidCompression=yes
 ArchiveExtraction=full
@@ -59,6 +69,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#InstallerBackground}"; DestName: "rock-installer-background.png"; Flags: dontcopy
 
 [Icons]
 Name: "{userprograms}\ROCK 洛克手碟演奏器"; Filename: "{app}\RockAutoMusicPlay.exe"; WorkingDir: "{app}"
@@ -93,11 +104,36 @@ var
   DriverProgressPage: TOutputProgressWizardPage;
   DriverPrepared, DriverRestartRequired: Boolean;
   DriverInstallerPath, DriverInstallMessage: String;
+  InstallerBackImage: TPngImage;
 
 function GetFileAttributesW(FileName: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 function ExpandEnvironmentStringsW(Source, Destination: String; Size: Cardinal): Cardinal;
   external 'ExpandEnvironmentStringsW@kernel32.dll stdcall';
+
+procedure UpdateInstallerArtwork(CurPageID: Integer);
+var
+  Backgrounds: TArrayOfGraphic;
+  Opacity: Byte;
+begin
+  if WizardSilent or HighContrastActive then Exit;
+  try
+    if InstallerBackImage = nil then
+    begin
+      ExtractTemporaryFile('rock-installer-background.png');
+      InstallerBackImage := TPngImage.Create;
+      InstallerBackImage.LoadFromFile(ExpandConstant('{tmp}\rock-installer-background.png'));
+    end;
+    SetLength(Backgrounds, 1);
+    Backgrounds[0] := InstallerBackImage;
+    if (CurPageID = wpWelcome) or (CurPageID = wpFinished) then Opacity := 255
+    else Opacity := 65;
+    WizardSetBackImage(Backgrounds, True, True, Opacity);
+  except
+    { Decorative artwork must never prevent an installation. }
+    Log('Installer artwork unavailable: ' + GetExceptionMessage);
+  end;
+end;
 
 function ContainsName(const Names: TArrayOfString; const Name: String): Boolean;
 var
@@ -417,6 +453,7 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  UpdateInstallerArtwork(CurPageID);
   if CurPageID = DriverPage.ID then
   begin
     InspectDriver;
@@ -433,4 +470,9 @@ begin
       WizardForm.NoRadio.Checked := True;
     end;
   end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  if InstallerBackImage <> nil then InstallerBackImage.Free;
 end;

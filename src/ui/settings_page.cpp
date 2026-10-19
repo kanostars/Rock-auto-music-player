@@ -113,7 +113,7 @@ SettingsPage::SettingsPage(QWidget* parent):QWidget(parent){
     for(int column=0;column<3;++column)apps->setColumnStretch(column,1);
     desktop->addLayout(apps);desktop->addStretch(1);desktop->addWidget(text("外观即时生效 · 快捷键保存后生效 · 演奏中暂停连接检测与按键测试","muted"));
     auto createWindow=[this](const char* name,const QString& title,int width,int height){
-        auto* window=new QDialog(this);window->setObjectName(name);window->setProperty("settingsDialog",true);window->setWindowTitle(title);
+        auto* window=new QDialog(this);Theme::prepareWindow(window);window->setObjectName(name);window->setProperty("settingsDialog",true);window->setWindowTitle(title);
         if(const auto* display=screen()){const auto available=display->availableGeometry();width=std::min(width,std::max(320,available.width()-48));height=std::min(height,std::max(260,available.height()-80));}
         window->setWindowFlag(Qt::WindowContextHelpButtonHint,false);window->setModal(false);window->resize(width,height);return window;
     };
